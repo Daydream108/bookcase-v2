@@ -1,0 +1,12 @@
+name = "bookcase"
+compatibility_date = "2024-12-18"
+compatibility_flags = ["nodejs_compat"]
+main = ".open-next/worker.js"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[vars]
+NEXT_PUBLIC_SUPABASE_URL = "https://dnkjfbxjsicqbtwoqhao.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_pdVL01ViHeW-eH9JeNA5lA_UCucJTm8"

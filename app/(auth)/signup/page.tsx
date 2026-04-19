@@ -1,0 +1,112 @@
+'use client'
+
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+
+export default function SignupPage() {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setMessage(null)
+    setLoading(true)
+    const supabase = createClient()
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    })
+    setLoading(false)
+    if (signUpError) {
+      setError(signUpError.message)
+      return
+    }
+    if (data.session) {
+      router.push('/home')
+      router.refresh()
+      return
+    }
+    setMessage('Check your email for a confirmation link.')
+  }
+
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 12 }}>Start your shelf</div>
+      <h1 className="display-md" style={{ marginBottom: 10 }}>Create account.</h1>
+      <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 24 }}>
+        Track books, build streaks, find your taste twin.
+      </p>
+
+      <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>
+          Display name
+        </label>
+        <input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Brett"
+          style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
+        />
+
+        <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>
+          Email
+        </label>
+        <input
+          type="email"
+          autoComplete="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@domain.com"
+          style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
+        />
+
+        <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>
+          Password
+        </label>
+        <input
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={8}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="at least 8 characters"
+          style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
+        />
+
+        {error && (
+          <div style={{ fontSize: 13, color: 'var(--pulp-deep)', background: 'var(--pulp-soft)', border: '1px solid var(--pulp)', padding: 10, borderRadius: 10 }}>
+            {error}
+          </div>
+        )}
+        {message && (
+          <div style={{ fontSize: 13, color: 'var(--moss)', background: 'color-mix(in oklab, var(--moss) 10%, transparent)', border: '1px solid var(--moss)', padding: 10, borderRadius: 10 }}>
+            {message}
+          </div>
+        )}
+
+        <button type="submit" disabled={loading} className="btn btn-pulp" style={{ justifyContent: 'center', marginTop: 6 }}>
+          {loading ? 'Creating…' : 'Create account'}
+        </button>
+      </form>
+
+      <div style={{ marginTop: 20, fontSize: 13, color: 'var(--ink-3)' }}>
+        Already have one?{' '}
+        <Link href="/login" className="link-u" style={{ color: 'var(--pulp)', fontWeight: 600 }}>
+          Sign in →
+        </Link>
+      </div>
+    </div>
+  )
+}
