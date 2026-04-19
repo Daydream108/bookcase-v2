@@ -10,12 +10,13 @@ export function Cover({
   className = '',
 }: {
   book: Book
-  size?: number
+  size?: number | string
   style?: CSSProperties
   className?: string
 }) {
   const [loaded, setLoaded] = useState(false)
   const [err, setErr] = useState(false)
+  const isSmall = typeof size === 'number' && size < 80
 
   return (
     <div
@@ -35,7 +36,7 @@ export function Cover({
       {err && (
         <div
           style={{
-            padding: size < 80 ? 6 : 10,
+            padding: isSmall ? 6 : 10,
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
@@ -46,7 +47,7 @@ export function Cover({
           <div
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: size < 80 ? 11 : 14,
+              fontSize: isSmall ? 11 : 14,
               lineHeight: 1.1,
               fontWeight: 400,
             }}
@@ -55,7 +56,7 @@ export function Cover({
           </div>
           <div
             style={{
-              fontSize: size < 80 ? 8 : 10,
+              fontSize: isSmall ? 8 : 10,
               opacity: 0.7,
               marginTop: 4,
               fontFamily: 'var(--font-mono)',
