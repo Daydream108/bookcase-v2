@@ -13,6 +13,7 @@ const paths: Record<string, string> = {
   heart: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z',
   plus: 'M12 5v14M5 12h14',
   x: 'M18 6L6 18M6 6l12 12',
+  menu: 'M3 6h18M3 12h18M3 18h18',
   chevron: 'M9 18l6-6-6-6',
   chevrondown: 'M6 9l6 6 6-6',
   bookmark: 'M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z',

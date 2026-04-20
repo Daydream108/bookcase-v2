@@ -1,9 +1,15 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Bookcase — social reading',
   description: 'A social reading app for tracking books, reviews, clubs, and streaks.',
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#f6f1e7',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -18,12 +18,12 @@ const items = [
   { href: '/settings', icon: 'settings', label: 'Settings' },
 ] as const
 
-export function Sidebar({ unread = 3 }: { unread?: number }) {
+export function Sidebar({ unread = 3, open = false, onNavigate }: { unread?: number; open?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname()
   const brett = users.find((u) => u.id === 'brett')!
 
   return (
-    <aside className="sidebar">
+    <aside className={'sidebar' + (open ? ' open' : '')}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 10px 20px' }}>
         <div
           style={{
@@ -51,6 +51,7 @@ export function Sidebar({ unread = 3 }: { unread?: number }) {
             <Link
               key={it.href}
               href={it.href}
+              onClick={onNavigate}
               className={'nav-item ' + (active ? 'active' : '')}
             >
               <Icon name={it.icon} size={17} />

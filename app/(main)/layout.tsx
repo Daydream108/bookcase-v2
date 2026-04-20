@@ -1,10 +1,5 @@
-import { Sidebar } from '@/components/redesign/Sidebar'
+import { MainShell } from '@/components/redesign/MainShell'
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      <Sidebar />
-      <div style={{ marginLeft: 240, minHeight: '100vh', background: 'var(--paper)' }}>{children}</div>
-    </>
-  )
+  return <MainShell>{children}</MainShell>
 }
