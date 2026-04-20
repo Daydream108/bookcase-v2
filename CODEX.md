@@ -1,82 +1,68 @@
-# Handoff notes for Codex
+# Handoff Notes for Codex
 
-Every page now reads and writes real Supabase data via `lib/db.ts`. The visual redesign, mobile layout, auth, search, rating, shelving, reviews, posts, streaks, notifications, clubs (read-only), explore, and roadmap are wired end-to-end.
+Most of the Supabase wiring work is now live. The redesign, mobile layout, auth, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, and roadmap all read real data through `lib/db.ts`.
+
+## Status for 2026-04-20
+
+- Done today: clubs, club detail, club membership, club posting, post comments, profile favorites, reading goals, badges, book tags, review saves, and activity-event writes are implemented.
+- Build fix: public Supabase config now has repo-safe fallbacks, so Cloudflare prerender no longer depends on `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` being injected during build.
+- Main follow-up: run a manual live smoke test after the next deploy.
 
 ## Architecture
 
-- **Framework**: Next.js 15 (app router) on Cloudflare Workers via `@opennextjs/cloudflare`
-- **Backend**: Supabase (`https://dnkjfbxjsicqbtwoqhao.supabase.co`) — ~35 tables, RLS enforced, see [supabase/bookcase.sql](supabase/bookcase.sql)
-- **Deploy**: Cloudflare native Git integration, pushes to `main` auto-deploy
-- **Data layer**: all reads/writes go through [lib/db.ts](lib/db.ts) — page-level helpers accept `SupabaseClient` so they work from client or server
-- **Adapters**: `toUiBook(dbBook, stats?)` and `toUiUser(dbProfile)` in `lib/db.ts` convert DB shapes to the shape the existing `Cover`/`Avatar` components expect — avoids component rewrites
-- **Auth client**: `useMemo(() => createClient(), [])` in client pages to keep a stable Supabase instance across renders
+- Framework: Next.js 15 app router on Cloudflare Workers via `@opennextjs/cloudflare`
+- Backend: Supabase (`https://dnkjfbxjsicqbtwoqhao.supabase.co`) with RLS enforced, schema in [supabase/bookcase.sql](supabase/bookcase.sql)
+- Deploy: Cloudflare native Git integration, pushes to `main` auto-deploy
+- Data layer: [lib/db.ts](lib/db.ts) is the single source of truth for reads and writes
+- Adapters: `toUiBook(dbBook, stats?)` and `toUiUser(dbProfile)` keep the redesign components working without broad prop rewrites
+- Auth client: client pages use `useMemo(() => createClient(), [])` for a stable Supabase instance
+- Public config: [lib/supabase/config.ts](lib/supabase/config.ts) provides safe fallbacks for the public URL and anon key
 
-## Known gaps (pick any — user will prioritize)
+## Remaining Feature Gaps for Tomorrow
 
-### 1. Club membership and creation
-- Schema exists (`clubs`, `club_members`, `club_posts`) but only `listClubs()` is implemented
-- [app/(main)/clubs/page.tsx](app/(main)/clubs/page.tsx) is read-only — no join/leave buttons, no create-club form, no club detail page
-- Need: `joinClub`, `leaveClub`, `createClub`, `listClubPosts`, `postToClub` helpers + a `/clubs/[id]` route
+### 1. Search only covers titles
+- [app/(main)/search/page.tsx](app/(main)/search/page.tsx) is wired to the real database, but results are still limited to book titles.
+- The UI still implies broader discovery, so authors, moods, readers, clubs, and discussion results either need to be added or the copy should be narrowed.
 
-### 2. Post comments
-- `book_post_comments` table exists in schema, not exposed anywhere in UI
-- Book posts and home feed show upvote counts but no comment thread
-- Need: `listPostComments`, `createComment`, `deleteComment` helpers + comment UI on post cards
+### 2. Settings page is still a static shell
+- `/settings` is mostly presentational right now.
+- Preferences, account controls, and notification toggles are not persisted yet.
 
-### 3. Favorite books (pinned to profile)
-- `favorite_books` table exists, max 4 pinned per user
-- [app/(main)/profile/[username]/page.tsx](app/(main)/profile/[username]/page.tsx) has no favorites section
-- Need: `listFavorites`, `pinFavorite`, `unpinFavorite` helpers + a "Favorites" row on profile with reorder UI
+### 3. Review likes and reactions are still local-only
+- Review cards render a `VoteBar`, but those interactions are not saved to Supabase.
+- If the live site supports review likes, we still need a real table or write path plus optimistic updates.
 
-### 4. Reading goals
-- `reading_goals` table exists (yearly goal, book count target)
-- No UI anywhere
-- Need: goal set/edit flow on profile or streak page, progress bar on home dashboard
+### 4. Share actions are UI-only
+- Book, review, and post share buttons do not trigger a real share flow yet.
+- We should wire native share or copy-link behavior, or hide those controls until they work.
 
-### 5. Badges
-- `badges` table exists with earned badges per user
-- Profile page does not display them
-- Need: `listBadges(userId)` helper + badge row on profile, plus badge-earned toast on relevant actions
+### 5. Notifications are readable but not generated
+- [app/(main)/notifications/page.tsx](app/(main)/notifications/page.tsx) can list and mark notifications read.
+- The app still does not insert notification rows when people comment, join clubs, upvote, or interact elsewhere, so the inbox stays sparse.
 
-### 6. Book tags
-- `tags` + `book_tags` tables exist
-- [app/(main)/book/[id]/page.tsx](app/(main)/book/[id]/page.tsx) removed the mock tags display — never added back with real data
-- Need: `listBookTags`, `addTag`, `removeTag` helpers + a tag chip row on the book page
+### 6. Manual deployed smoke test
+- Nothing has been verified end-to-end on the live Cloudflare Worker after the latest data wiring.
+- Suggested path: sign up -> sign in -> search -> rate -> shelf -> review -> post -> comment -> join club -> log session -> verify streak, profile, and notifications.
 
-### 7. Review saves/bookmarks
-- `review_saves` table exists
-- Review cards on book page have no save/bookmark button
-- Need: `toggleReviewSave` helper + bookmark icon on review cards
+## File Map
 
-### 8. Activity events not auto-populated
-- `activity_events` table is read by `listRecentActivity` on the home feed
-- No DB-side triggers write to it on user_books insert, review insert, session log, etc.
-- Either add Postgres triggers (cleanest) or have `lib/db.ts` explicitly insert activity rows alongside the main writes
-- Currently home feed activity sidebar will look sparse until this is fixed
-
-### 9. Smoke test on deployed Worker
-- Nothing has been verified end-to-end on the Cloudflare deployment
-- Should manually test: signup → sign in → search → rate → shelf → review → post → log session → check streak → upvote roadmap
-- Watch browser console and Worker logs for RLS denials or missing FK hints in Supabase queries
-
-## File map
-
-- [lib/db.ts](lib/db.ts) — single source of truth for all Supabase queries and types (`DbBookCard`, `DbProfile`, `DbReview`, `DbRoadmapFeature`, etc.)
-- [lib/supabase/client.ts](lib/supabase/client.ts) / [lib/supabase/server.ts](lib/supabase/server.ts) — SSR-aware Supabase client factories
-- [app/auth/signout/route.ts](app/auth/signout/route.ts) — POST handler for sidebar signout form
-- [components/redesign/Sidebar.tsx](components/redesign/Sidebar.tsx) — reads real profile + unread count + streak
-- [components/redesign/home/PostComposer.tsx](components/redesign/home/PostComposer.tsx) — inline book picker + post form (book_posts requires book_id, so search-pick is mandatory)
+- [lib/db.ts](lib/db.ts): Supabase queries, types, and DB-to-UI adapters
+- [lib/supabase/client.ts](lib/supabase/client.ts) and [lib/supabase/server.ts](lib/supabase/server.ts): browser and server Supabase factories
+- [lib/supabase/config.ts](lib/supabase/config.ts): shared public Supabase config with repo-safe fallbacks
+- [app/auth/signout/route.ts](app/auth/signout/route.ts): POST handler for sidebar signout
+- [components/redesign/Sidebar.tsx](components/redesign/Sidebar.tsx): real profile, unread count, and streak data
+- [components/redesign/home/PostComposer.tsx](components/redesign/home/PostComposer.tsx): inline book picker and post form
 
 ## Gotchas
 
-- `book_posts.book_id` is NOT NULL — every post must reference a book. This is why the home composer has an inline book picker instead of a plain textarea.
-- `reading_sessions` has a unique constraint on `(user_id, session_date, book_id)` — same-day same-book logs upsert rather than duplicate.
-- `streaks` row is per-user (PK on user_id). `touchStreak(supabase, userId)` in `lib/db.ts` hand-rolls the increment/reset logic because there's no DB trigger for it.
-- Supabase nested joins need FK hints when there are multiple FKs between two tables, e.g. `profile:profiles!reviews_user_id_fkey(*)` rather than `profile:profiles(*)`.
-- `roadmap_features.has_voted` is not a column — `listRoadmapFeatures()` hydrates it per-request by joining against `roadmap_votes` for the current user.
-- Async page params in Next 15 — use the `use()` hook or `await params` in server components.
+- `book_posts.book_id` is not null, so every post must reference a book
+- `reading_sessions` has a unique constraint on `(user_id, session_date, book_id)`, so same-day same-book logs upsert
+- `streaks` is one row per user, and `touchStreak(supabase, userId)` in `lib/db.ts` handles increment and reset logic
+- Supabase nested joins need FK hints when there are multiple foreign keys between two tables
+- `roadmap_features.has_voted` is hydrated per request from `roadmap_votes`; it is not a stored column
+- Async page params in Next 15 should use `use()` in client components or `await params` in server components
 
-## Commit style
+## Commit Style
 
 Lowercase imperative, short, no ticket prefix. Recent examples:
 - `add mobile layout: hamburger drawer, responsive grids, viewport meta`
