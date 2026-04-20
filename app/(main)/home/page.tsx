@@ -1,63 +1,95 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { books, users } from '@/lib/redesign-data'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
-import { FeedTabs } from '@/components/redesign/home/FeedTabs'
-import { ReviewCard, type Review } from '@/components/redesign/home/ReviewCard'
-import { ActivityRow, type Activity } from '@/components/redesign/home/ActivityRow'
-import { ThreadCard, type Thread } from '@/components/redesign/home/ThreadCard'
+import { PostComposer } from '@/components/redesign/home/PostComposer'
+import { createClient } from '@/lib/supabase/client'
+import {
+  getCurrentProfile,
+  getReadingGoal,
+  getStreak,
+  listPopularBooks,
+  listRecentActivity,
+  listRecentBookPosts,
+  toUiBook,
+  toUiUser,
+  type DbActivityEvent,
+  type DbBookCard,
+  type DbBookPost,
+  type DbProfile,
+  type DbReadingGoal,
+} from '@/lib/db'
 
 export default function HomePage() {
-  const [tab, setTab] = useState('following')
-  const brett = users.find((u) => u.id === 'brett')!
+  const supabase = useMemo(() => createClient(), [])
+  const [me, setMe] = useState<DbProfile | null>(null)
+  const [posts, setPosts] = useState<DbBookPost[]>([])
+  const [activity, setActivity] = useState<DbActivityEvent[]>([])
+  const [trending, setTrending] = useState<DbBookCard[]>([])
+  const [streak, setStreak] = useState({ current: 0, longest: 0 })
+  const [goal, setGoal] = useState<DbReadingGoal | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const reviews: Review[] = [
-    {
-      userId: 'ava', bookId: 'sb', rating: 5, time: '2h',
-      bodyPre: 'finally finished. ',
-      spoiler: 'the bacchanal scene wrecked me. when richard realizes what they actually did to bunny—',
-      bodyPost: ' dark academia is back, baby. i will think about this book every single october.',
-      tags: ['Dark Academia', 'Re-reading', 'Obsessive'],
-      reactions: [{ emoji: '🕯️', count: 142, initial: true }, { emoji: '💔', count: 88 }, { emoji: '📚', count: 56 }],
-      replies: 23,
-    },
-    {
-      userId: 'maya', bookId: 'hm', rating: 4.5, time: '5h',
-      bodyPre: 'crying in the weir fandom corner. rocky is my son. this is hard sci-fi with an actual heart. the ending made me close the book and stare at the wall for 20 minutes.',
-      tags: ['Sci-Fi', 'Cried', 'Unputdownable'],
-      reactions: [{ emoji: '🪐', count: 201, initial: true }, { emoji: '😭', count: 94 }, { emoji: '🔥', count: 38 }],
-      replies: 41,
-    },
-  ]
+  const refresh = async () => {
+    const [p, a, tr] = await Promise.all([
+      listRecentBookPosts(supabase, 12),
+      listRecentActivity(supabase, 20),
+      listPopularBooks(supabase, 4),
+    ])
+    setPosts(p)
+    setActivity(a)
+    setTrending(tr)
+  }
 
-  const activity: Activity[] = [
-    { userId: 'leo', action: 'started', bookId: 'tb', time: '12m' },
-    { userId: 'sam', action: 'finished', bookId: 'pr', time: '1h', note: 'i think i live in the house now' },
-    { userId: 'jules', action: 'logged', bookId: 'bb', time: '3h', note: '80 pages on the train commute' },
-    { userId: 'ava', action: 'shelved', bookId: 'tm', time: '5h' },
-    { userId: 'maya', action: 'followed', targetUser: 'jules', time: '8h' },
-    { userId: 'leo', action: 'started', bookId: 'kl', time: '1d' },
-  ]
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const profile = await getCurrentProfile(supabase)
+      if (cancelled) return
+      setMe(profile)
+      if (profile) {
+        const [s, g] = await Promise.all([
+          getStreak(supabase, profile.id),
+          getReadingGoal(supabase),
+        ])
+        if (cancelled) return
+        setStreak({ current: s.current_streak ?? 0, longest: s.longest_streak ?? 0 })
+        setGoal(g)
+      }
+      await refresh()
+      if (!cancelled) setLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase])
 
-  const threads: Thread[] = [
-    { bookId: 'sb', title: 'Was Bunny actually likable? A case for the defense.', preview: "hear me out. we only see him through richard's (unreliable, drunk, in love with henry) narration...", time: '4h', hasSpoiler: true, chapter: '8', replies: 324, upvotes: 892, participants: ['ava', 'jules', 'sam', 'leo'] },
-    { bookId: 'hm', title: "Theory: Rocky's species evolved because of [REDACTED]", preview: 'pulling this together from chapters 18-22. the astrophage trajectory from 40 Eridani suggests...', time: '6h', hasSpoiler: true, chapter: '22', replies: 187, upvotes: 542, participants: ['maya', 'leo', 'jules'] },
-  ]
+  const greeting = useMemo(() => {
+    const h = new Date().getHours()
+    if (h < 12) return 'Good morning'
+    if (h < 18) return 'Good afternoon'
+    return 'Good evening'
+  }, [])
+
+  const displayName = me?.display_name ?? me?.username ?? 'reader'
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
       <main>
         <div className="card" style={{ padding: 24, marginBottom: 24, background: 'linear-gradient(135deg, var(--paper), var(--pulp-soft))', border: '1px solid var(--pulp)', borderRadius: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div>
-              <div className="eyebrow" style={{ color: 'var(--pulp-deep)' }}>🔥 14-day streak · keep it alive</div>
-              <h1 className="display-md" style={{ marginTop: 8 }}>Good morning, Brett.</h1>
+              <div className="eyebrow" style={{ color: 'var(--pulp-deep)' }}>
+                🔥 {streak.current}-day streak {streak.current > 0 ? '· keep it alive' : '· start one today'}
+              </div>
+              <h1 className="display-md" style={{ marginTop: 8 }}>
+                {greeting}, {displayName}.
+              </h1>
               <div style={{ fontSize: 14, color: 'var(--ink-2)', marginTop: 8 }}>
-                78 pages this month · 3 of 24 books ·{' '}
                 <Link href="/streak" className="link-u" style={{ color: 'var(--pulp-deep)', fontWeight: 600 }}>
                   Log today&apos;s session →
                 </Link>
@@ -65,118 +97,218 @@ export default function HomePage() {
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ textAlign: 'center' }}>
-                <div className="serif" style={{ fontSize: 48, lineHeight: 1 }}>14</div>
+                <div className="serif" style={{ fontSize: 48, lineHeight: 1 }}>{streak.current}</div>
                 <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>day streak</div>
               </div>
               <div style={{ width: 1, background: 'var(--border-2)' }} />
               <div style={{ textAlign: 'center' }}>
-                <div className="serif" style={{ fontSize: 48, lineHeight: 1 }}>78</div>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>pages · april</div>
-              </div>
-              <div style={{ width: 1, background: 'var(--border-2)' }} />
-              <div style={{ textAlign: 'center' }}>
-                <div className="serif" style={{ fontSize: 48, lineHeight: 1, color: 'var(--pulp)' }}>L7</div>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>reader lvl</div>
+                <div className="serif" style={{ fontSize: 48, lineHeight: 1 }}>{streak.longest}</div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>longest</div>
               </div>
             </div>
           </div>
         </div>
 
-        <FeedTabs tab={tab} setTab={setTab} />
+        {me && (
+          <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 6 }}>This year&apos;s reading goal</div>
+                <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+                  {goal
+                    ? `${goal.books_completed}/${goal.book_goal} books, ${goal.pages_completed}/${goal.page_goal} pages, ${goal.minutes_completed}/${goal.minute_goal} minutes`
+                    : 'Set a goal so your progress has something to chase.'}
+                </div>
+              </div>
+              <Link href="/streak" className="btn btn-outline btn-sm">
+                {goal ? 'Edit goal' : 'Set goal'}
+              </Link>
+            </div>
 
-        <div className="card" style={{ padding: 16, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Avatar user={brett} size={36} />
-          <input placeholder="what are you reading? drop a hot take, start a thread…" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 14 }} />
-          <button className="btn btn-ghost btn-sm"><Icon name="book" size={14} /> Book</button>
-          <button className="btn btn-ghost btn-sm"><Icon name="star" size={14} /> Rate</button>
-          <button className="btn btn-pulp btn-sm">Post</button>
+            {goal ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <GoalBar label="Books" value={goal.books_completed} target={goal.book_goal} />
+                <GoalBar label="Pages" value={goal.pages_completed} target={goal.page_goal} />
+                <GoalBar label="Minutes" value={goal.minutes_completed} target={goal.minute_goal} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                Your streak is live. Add a yearly goal to track the bigger arc too.
+              </div>
+            )}
+          </div>
+        )}
+
+        <PostComposer me={me} onPosted={refresh} />
+
+        <div className="eyebrow" style={{ marginBottom: 12 }}>🧵 Latest threads</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
+          {loading ? (
+            <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>Loading…</div>
+          ) : posts.length === 0 ? (
+            <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>
+              Nothing yet. Be the first to post — use the composer above.
+            </div>
+          ) : (
+            posts.map((p) => {
+              const u = toUiUser(p.profile)
+              const b = toUiBook(p.book ?? null)
+              return (
+                <Link
+                  key={p.id}
+                  href={`/book/${p.book_id}`}
+                  className="card"
+                  style={{ padding: 16, display: 'flex', gap: 14, alignItems: 'flex-start', textDecoration: 'none', color: 'inherit' }}
+                >
+                  {p.book && <Cover book={b} size={56} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Avatar user={u} size={18} />
+                      <b style={{ color: 'var(--ink-2)' }}>@{u.handle}</b>
+                      {p.book && <span>· on <i>{p.book.title}</i></span>}
+                      <span>· {timeAgo(p.created_at)}</span>
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{p.title}</div>
+                    {p.body && (
+                      <div style={{ fontSize: 13, color: 'var(--ink-2)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                        {p.body}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+                      <span>↑ {p.upvotes}</span>
+                    </div>
+                  </div>
+                </Link>
+              )
+            })
+          )}
         </div>
 
-        <div className="eyebrow" style={{ marginBottom: 12 }}>🔥 Threads on fire</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-          {threads.map((t, i) => (
-            <ThreadCard key={i} thread={t} />
-          ))}
-        </div>
-
-        <div className="eyebrow" style={{ marginBottom: 12 }}>From people you follow</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 28 }}>
-          {reviews.map((r, i) => (
-            <ReviewCard key={i} review={r} />
-          ))}
-        </div>
-
-        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest shelf activity</div>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>📚 Latest shelf activity</div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {activity.map((a, i) => (
-            <ActivityRow key={i} activity={a} />
-          ))}
+          {activity.length === 0 ? (
+            <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>No activity yet.</div>
+          ) : (
+            activity.map((a) => {
+              const u = toUiUser(a.profile)
+              return (
+                <div key={a.id} style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border)' }}>
+                  <Avatar user={u} size={28} />
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                    <b>{u.name}</b>{' '}
+                    <span style={{ color: 'var(--ink-3)' }}>
+                      {describeEvent(a)}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{timeAgo(a.created_at)}</span>
+                </div>
+              )
+            })
+          )}
         </div>
       </main>
 
       <aside style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div className="eyebrow">🔥 Trending this week</div>
+            <div className="eyebrow">🔥 Popular</div>
             <Link href="/explore" className="link-u" style={{ fontSize: 12, color: 'var(--pulp)', fontWeight: 600 }}>
               See all
             </Link>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {['sb', 'hm', 'bb', 'pr'].map((id, i) => {
-              const b = books.find((x) => x.id === id)!
-              const readers = 100 + ((i + 1) * 73) % 400
+            {trending.map((b, i) => {
+              const ui = toUiBook(b, b.stats)
               return (
-                <Link key={id} href={`/book/${id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', padding: 0 }}>
-                  <div className="mono" style={{ fontSize: 18, color: 'var(--ink-4)', width: 22, fontWeight: 600 }}>{String(i + 1).padStart(2, '0')}</div>
-                  <Cover book={b} size={44} />
+                <Link key={b.id} href={`/book/${b.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', padding: 0 }}>
+                  <div className="mono" style={{ fontSize: 18, color: 'var(--ink-4)', width: 22, fontWeight: 600 }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </div>
+                  <Cover book={ui} size={44} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{b.author}</div>
-                    <div style={{ fontSize: 11, color: 'var(--pulp)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>★ {b.rating} · +{readers} readers</div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{ui.author}</div>
+                    <div style={{ fontSize: 11, color: 'var(--pulp)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                      {b.stats.avg_rating ? `★ ${b.stats.avg_rating.toFixed(1)}` : '★ —'} · {b.stats.rating_count} ratings
+                    </div>
                   </div>
                 </Link>
               )
             })}
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: 20, background: 'var(--ink)', color: 'var(--paper)', borderColor: 'var(--ink)' }}>
-          <div className="eyebrow" style={{ color: 'var(--ink-4)' }}>📡 Taste twin found</div>
-          <h3 className="serif" style={{ fontSize: 26, marginTop: 8, marginBottom: 8 }}>You + @mayamoss share 7 favorites.</h3>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            {['hm', 'pr', 'bb', 'sb', 'cr'].map((id) => {
-              const b = books.find((x) => x.id === id)!
-              return <Cover key={id} book={b} size={38} />
-            })}
-          </div>
-          <button className="btn btn-pulp btn-sm" style={{ width: '100%', justifyContent: 'center' }}>Follow @mayamoss</button>
-        </div>
-
-        <div className="card" style={{ padding: 20 }}>
-          <div className="eyebrow" style={{ marginBottom: 14 }}>✍️ Authors · new drops</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {[
-              { name: 'R.F. Kuang', handle: 'rfkuang', update: 'posted a draft excerpt', time: '3h', color: 'oklch(58% 0.15 10)' },
-              { name: 'Emily St. John Mandel', handle: 'esjmandel', update: 'announced new novel', time: '1d', color: 'oklch(54% 0.12 240)' },
-              { name: 'Andy Weir', handle: 'andyweir', update: 'AMA scheduled May 4', time: '2d', color: 'oklch(62% 0.14 85)' },
-            ].map((a) => (
-              <div key={a.handle} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className="avatar" style={{ width: 36, height: 36, background: a.color, fontSize: 14, position: 'relative' }}>
-                  {a.name.split(' ').map((p) => p[0]).join('').slice(0, 2)}
-                  <div style={{ position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderRadius: 99, background: 'var(--moss)', border: '2px solid var(--paper)' }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {a.name} <span style={{ color: 'var(--moss)', fontSize: 11 }}>✓ author</span>
-                  </div>
-                  <div style={{ color: 'var(--ink-3)', fontSize: 12 }}>{a.update} · {a.time}</div>
-                </div>
-              </div>
-            ))}
+            {!trending.length && (
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>No popular books yet.</div>
+            )}
           </div>
         </div>
       </aside>
+    </div>
+  )
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h`
+  const days = Math.floor(hrs / 24)
+  if (days < 30) return `${days}d`
+  return new Date(iso).toLocaleDateString()
+}
+
+function describeEvent(a: DbActivityEvent): string {
+  const bookTitle = a.book?.title ? ` ${a.book.title}` : ''
+  const targetName =
+    typeof a.metadata?.target_name === 'string' ? a.metadata.target_name : 'someone'
+  const badgeTitle = typeof a.metadata?.title === 'string' ? a.metadata.title : 'a badge'
+  switch (a.event_type) {
+    case 'started_reading':
+      return `started reading${bookTitle}`
+    case 'finished_reading':
+      return `finished${bookTitle}`
+    case 'book_logged':
+      return `logged${bookTitle}`
+    case 'book_reviewed':
+      return `reviewed${bookTitle}`
+    case 'list_created':
+      return 'created a list'
+    case 'followed_user':
+      return `followed ${targetName}`
+    case 'badge_unlocked':
+      return `unlocked ${badgeTitle}`
+    default:
+      return a.event_type.replace(/_/g, ' ')
+  }
+}
+
+function GoalBar({
+  label,
+  value,
+  target,
+}: {
+  label: string
+  value: number
+  target: number
+}) {
+  const pct = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, marginBottom: 6 }}>
+        <span style={{ fontWeight: 600 }}>{label}</span>
+        <span style={{ color: 'var(--ink-3)' }}>
+          {value} / {target}
+        </span>
+      </div>
+      <div style={{ height: 10, borderRadius: 999, background: 'var(--paper-2)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: 'linear-gradient(90deg, var(--pulp), oklch(76% 0.16 72))',
+          }}
+        />
+      </div>
     </div>
   )
 }

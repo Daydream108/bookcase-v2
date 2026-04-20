@@ -1,11 +1,40 @@
 'use client'
 
 import Link from 'next/link'
-import { books, moods, users } from '@/lib/redesign-data'
-import { Avatar } from '@/components/redesign/Avatar'
+import { useEffect, useMemo, useState } from 'react'
 import { Cover } from '@/components/redesign/Cover'
+import { createClient } from '@/lib/supabase/client'
+import { listPopularBooks, toUiBook, type DbBookCard } from '@/lib/db'
 
 export default function ExplorePage() {
+  const supabase = useMemo(() => createClient(), [])
+  const [books, setBooks] = useState<DbBookCard[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const data = await listPopularBooks(supabase, 24)
+      if (cancelled) return
+      setBooks(data)
+      setLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [supabase])
+
+  const genreBuckets = useMemo(() => {
+    const map = new Map<string, DbBookCard[]>()
+    for (const b of books) {
+      for (const g of b.genres) {
+        if (!map.has(g.name)) map.set(g.name, [])
+        map.get(g.name)!.push(b)
+      }
+    }
+    return [...map.entries()].slice(0, 6)
+  }, [books])
+
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 40px' }}>
       <div className="eyebrow" style={{ marginBottom: 10 }}>Discovery desk</div>
@@ -14,74 +43,67 @@ export default function ExplorePage() {
         <i style={{ color: 'var(--pulp)' }}>next obsession.</i>
       </h1>
       <p style={{ fontSize: 17, color: 'var(--ink-2)', marginBottom: 32, maxWidth: 640 }}>
-        Browse by mood, genre, and vibe. Follow the readers shaping the shelf right now.
+        Browse the most-rated books, ordered by the readers on Bookcase right now.
       </p>
 
-      <div className="eyebrow" style={{ marginBottom: 14 }}>Browse by mood</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 40 }}>
-        {moods.map((m) => (
-          <button key={m.name} className="card" style={{ padding: 16, textAlign: 'left', cursor: 'pointer' }}>
-            <div style={{ fontSize: 24, marginBottom: 6 }}>{m.emoji}</div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>{m.name}</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{m.count} books</div>
-          </button>
-        ))}
-      </div>
+      <div className="eyebrow" style={{ marginBottom: 14 }}>🔥 Popular on Bookcase</div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 16 }}>
-        <div>
-          <div className="eyebrow">🔥 The dark academia drop</div>
-          <h2 className="display-sm">Campus vibes, immaculate dread.</h2>
+      {loading ? (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>Loading…</div>
+      ) : books.length === 0 ? (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
+          No books in the catalog yet.
         </div>
-        <Link href="/explore" className="link-u mono" style={{ fontSize: 12, color: 'var(--pulp)' }}>
-          SEE ALL →
-        </Link>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16, marginBottom: 40 }}>
-        {['sb', 'bb', 'nv', 'st', 'sv', 'an'].map((id) => {
-          const b = books.find((x) => x.id === id)
-          if (!b) return null
-          return (
-            <Link key={id} href={`/book/${id}`} style={{ textAlign: 'left', padding: 0 }}>
-              <Cover book={b} size="100%" style={{ width: '100%', marginBottom: 10 }} />
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{b.title}</div>
-              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{b.author}</div>
-              <div style={{ fontSize: 12, color: 'var(--pulp)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>★ {b.rating}</div>
-            </Link>
-          )
-        })}
-      </div>
-
-      <div className="eyebrow" style={{ marginBottom: 14 }}>📝 Curated by readers you follow</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 40 }}>
-        {[
-          { title: 'Books that rewired my brain', curator: 'ava', count: 14, covers: ['sb', 'pr', 'bb'], color: 'var(--pulp)' },
-          { title: 'Sci-fi with a heart (crying optional)', curator: 'maya', count: 9, covers: ['hm', 'kl', 'tb'], color: 'var(--moss)' },
-          { title: 'Short books, HUGE impact', curator: 'jules', count: 11, covers: ['st', 'an', 'rd'], color: 'var(--plum)' },
-        ].map((l, i) => {
-          const u = users.find((x) => x.id === l.curator)!
-          return (
-            <div key={i} className="card" style={{ padding: 20, background: l.color, color: 'white', borderColor: 'transparent' }}>
-              <h3 className="serif" style={{ fontSize: 24, lineHeight: 1.15, marginBottom: 12 }}>{l.title}</h3>
-              <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-                {l.covers.map((id) => {
-                  const b = books.find((x) => x.id === id)
-                  return b ? <Cover key={id} book={b} size={48} /> : null
-                })}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Avatar user={u} size={22} />
-                  <span style={{ fontSize: 12 }}>@{u.handle} · {l.count} books</span>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16, marginBottom: 40 }}>
+          {books.slice(0, 12).map((b) => {
+            const ui = toUiBook(b, b.stats)
+            return (
+              <Link key={b.id} href={`/book/${b.id}`} style={{ textAlign: 'left', padding: 0 }}>
+                <Cover book={ui} size="100%" style={{ width: '100%', marginBottom: 10 }} />
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {b.title}
                 </div>
-                <button style={{ color: 'white', fontSize: 12, fontWeight: 600, border: '1px solid rgba(255,255,255,0.3)', padding: '4px 10px', borderRadius: 99, background: 'transparent' }}>
-                  Save
-                </button>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {ui.author}
+                </div>
+                {b.stats.avg_rating !== null && (
+                  <div style={{ fontSize: 12, color: 'var(--pulp)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                    ★ {b.stats.avg_rating.toFixed(1)} · {b.stats.rating_count}
+                  </div>
+                )}
+              </Link>
+            )
+          })}
+        </div>
+      )}
+
+      {genreBuckets.length > 0 && (
+        <>
+          <div className="eyebrow" style={{ marginBottom: 14 }}>📚 By genre</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+            {genreBuckets.map(([genre, list]) => (
+              <div key={genre}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <h2 className="display-sm" style={{ fontSize: 22 }}>{genre}</h2>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{list.length} books</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
+                  {list.slice(0, 6).map((b) => {
+                    const ui = toUiBook(b, b.stats)
+                    return (
+                      <Link key={b.id} href={`/book/${b.id}`}>
+                        <Cover book={ui} size="100%" style={{ width: '100%', marginBottom: 8 }} />
+                        <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
+                      </Link>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          )
-        })}
-      </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

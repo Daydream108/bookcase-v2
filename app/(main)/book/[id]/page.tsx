@@ -1,176 +1,356 @@
 'use client'
 
-import { use, useState } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { books, users } from '@/lib/redesign-data'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { Spoiler, VoteBar } from '@/components/redesign/primitives'
+import { createClient } from '@/lib/supabase/client'
+import {
+  addTag,
+  awardProgressBadges,
+  createBookPost,
+  createComment,
+  createReview,
+  deleteComment,
+  getBookWithStats,
+  getCurrentProfile,
+  getUserBook,
+  listBookPosts,
+  listBookTags,
+  listPostComments,
+  listReviewsForBook,
+  listSavedReviewIds,
+  logReadingSession,
+  removeTag,
+  toggleReviewSave,
+  toUiBook,
+  toUiUser,
+  upsertUserBook,
+  type DbBookCard,
+  type DbBookPost,
+  type DbBookPostComment,
+  type DbProfile,
+  type DbReview,
+  type DbTag,
+  type DbUserBook,
+} from '@/lib/db'
 
-type Quote = {
-  id: number
-  userId: string
-  body: string
-  page: number | null
-  votes: number
-  comments: number
-  voted: boolean
-  time: string
-  timebucket: string
-  mine?: boolean
-}
+type CommentMap = Record<string, DbBookPostComment[]>
+type DraftMap = Record<string, string>
+type ToggleMap = Record<string, boolean>
 
 export default function BookPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const book = books.find((b) => b.id === id) ?? books[0]
+  const supabase = useMemo(() => createClient(), [])
 
-  const [shelf, setShelf] = useState<'none' | 'reading' | 'want'>('none')
-  const [rating, setRating] = useState(0)
-  const [tab, setTab] = useState<'threads' | 'reviews' | 'quotes' | 'lists'>('threads')
-  const [sort, setSort] = useState<'hot' | 'top' | 'new'>('hot')
-  const [timeframe, setTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('all')
+  const [book, setBook] = useState<DbBookCard | null>(null)
+  const [me, setMe] = useState<DbProfile | null>(null)
+  const [userBook, setUserBook] = useState<DbUserBook | null>(null)
+  const [reviews, setReviews] = useState<DbReview[]>([])
+  const [threads, setThreads] = useState<DbBookPost[]>([])
+  const [tags, setTags] = useState<DbTag[]>([])
+  const [savedReviewIds, setSavedReviewIds] = useState<string[]>([])
+  const [commentsByPost, setCommentsByPost] = useState<CommentMap>({})
+  const [commentDrafts, setCommentDrafts] = useState<DraftMap>({})
+  const [openComments, setOpenComments] = useState<ToggleMap>({})
+  const [tab, setTab] = useState<'threads' | 'reviews'>('threads')
+  const [loading, setLoading] = useState(true)
+
+  const [showReview, setShowReview] = useState(false)
+  const [reviewBody, setReviewBody] = useState('')
+  const [reviewRating, setReviewRating] = useState(0)
+  const [reviewSpoiler, setReviewSpoiler] = useState(false)
+
+  const [showThread, setShowThread] = useState(false)
+  const [threadTitle, setThreadTitle] = useState('')
+  const [threadBody, setThreadBody] = useState('')
+
   const [showLog, setShowLog] = useState(false)
-  const [tags, setTags] = useState(['Campus', 'Unreliable narrator', 'Secret society'])
-  const [newTag, setNewTag] = useState('')
-  const [quotes, setQuotes] = useState<Quote[]>([
-    { id: 1, userId: 'ava', body: 'Beauty is terror. Whatever we call beautiful, we quiver before it.', page: 42, votes: 1284, comments: 87, voted: true, time: '3d', timebucket: 'week' },
-    { id: 2, userId: 'jules', body: 'Does such a thing as "the fatal flaw," that showy dark crack running down the middle of a life, exist outside literature?', page: 9, votes: 892, comments: 42, voted: false, time: '5d', timebucket: 'week' },
-    { id: 3, userId: 'sam', body: 'I suppose at one time in my life I might have had any number of stories, but now there is no other. This is the only story I will ever be able to tell.', page: 1, votes: 2104, comments: 132, voted: false, time: '2w', timebucket: 'month' },
-    { id: 4, userId: 'maya', body: 'The world is a mess, and I just need to rule it.', page: 218, votes: 68, comments: 4, voted: false, time: '8h', timebucket: 'day' },
-  ])
-  const [newQuote, setNewQuote] = useState('')
-  const [newQuotePage, setNewQuotePage] = useState('')
+  const [logPages, setLogPages] = useState('')
+  const [logMinutes, setLogMinutes] = useState('')
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10))
+  const [logNotes, setLogNotes] = useState('')
 
-  const addTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()])
-      setNewTag('')
+  const [tagInput, setTagInput] = useState('')
+  const [toast, setToast] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+
+    ;(async () => {
+      const profile = await getCurrentProfile(supabase)
+      if (cancelled) return
+      setMe(profile)
+
+      const [bookRow, reviewRows, threadRows, tagRows] = await Promise.all([
+        getBookWithStats(supabase, id),
+        listReviewsForBook(supabase, id),
+        listBookPosts(supabase, id),
+        listBookTags(supabase, id),
+      ])
+
+      if (cancelled) return
+      setBook(bookRow)
+      setReviews(reviewRows)
+      setThreads(threadRows)
+      setTags(tagRows)
+
+      if (profile) {
+        const [userBookRow, savedIds] = await Promise.all([
+          getUserBook(supabase, profile.id, id),
+          listSavedReviewIds(supabase, reviewRows.map((review) => review.id)),
+        ])
+        if (cancelled) return
+        setUserBook(userBookRow)
+        setSavedReviewIds(savedIds)
+      } else {
+        setUserBook(null)
+        setSavedReviewIds([])
+      }
+
+      if (!cancelled) setLoading(false)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [id, supabase])
+
+  const flash = (message: string) => {
+    setToast(message)
+    setTimeout(() => setToast(''), 2400)
+  }
+
+  const loadComments = async (postId: string) => {
+    const rows = await listPostComments(supabase, postId)
+    setCommentsByPost((current) => ({ ...current, [postId]: rows }))
+  }
+
+  const refreshThreads = async () => {
+    setThreads(await listBookPosts(supabase, id))
+  }
+
+  const refreshReviews = async () => {
+    const rows = await listReviewsForBook(supabase, id)
+    setReviews(rows)
+    if (me) {
+      setSavedReviewIds(await listSavedReviewIds(supabase, rows.map((review) => review.id)))
     }
   }
-  const removeTag = (t: string) => setTags(tags.filter((x) => x !== t))
 
-  const addQuote = (e: React.FormEvent) => {
+  const saveShelf = async (status: DbUserBook['status']) => {
+    if (!me) return flash('Sign in to save to a shelf')
+    const row = await upsertUserBook(supabase, {
+      bookId: id,
+      status,
+      started_at: status === 'reading' ? new Date().toISOString().slice(0, 10) : undefined,
+      finished_at: status === 'read' ? new Date().toISOString().slice(0, 10) : undefined,
+    })
+    setUserBook(row)
+    const awarded = await awardProgressBadges(supabase)
+    flash(
+      formatToast(
+        status === 'reading' ? 'Marked as reading' : status === 'read' ? 'Marked as read' : 'Saved',
+        awarded
+      )
+    )
+  }
+
+  const saveRating = async (rating: number) => {
+    if (!me) return flash('Sign in to rate')
+    const row = await upsertUserBook(supabase, {
+      bookId: id,
+      rating,
+      status: userBook?.status ?? 'read',
+    })
+    setUserBook(row)
+    flash(`Rated ${rating} stars`)
+  }
+
+  const submitReview = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newQuote.trim()) return
-    setQuotes([
-      { id: Date.now(), userId: 'brett', body: newQuote, page: parseInt(newQuotePage) || null, votes: 1, comments: 0, voted: true, time: 'just now', timebucket: 'day', mine: true },
-      ...quotes,
-    ])
-    setNewQuote('')
-    setNewQuotePage('')
+    if (!me) return flash('Sign in to post a review')
+    if (!reviewBody.trim() || reviewRating === 0) return flash('Add a rating and some text')
+
+    await createReview(supabase, {
+      bookId: id,
+      rating: reviewRating,
+      body: reviewBody,
+      spoiler: reviewSpoiler,
+    })
+
+    setReviewBody('')
+    setReviewRating(0)
+    setReviewSpoiler(false)
+    setShowReview(false)
+    await refreshReviews()
+    const awarded = await awardProgressBadges(supabase)
+    flash(formatToast('Review posted', awarded))
   }
 
-  const toggleQuoteVote = (id: number) =>
-    setQuotes(quotes.map((q) => (q.id === id ? { ...q, voted: !q.voted, votes: q.voted ? q.votes - 1 : q.votes + 1 } : q)))
+  const submitThread = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!me) return flash('Sign in to start a thread')
+    if (!threadTitle.trim()) return flash('Give your thread a title')
 
-  const reviews = [
-    { userId: 'ava', rating: 5, body: 'i will think about this book every single october. henry is my roman empire. the way donna tartt writes obsession—', spoiler: 'the bacchanal reveal completely rewired how i read the first third', votes: 230, replies: 23, time: '2h', timebucket: 'day' },
-    { userId: 'jules', rating: 4.5, body: 'peak dark academia. the prose is gorgeous, the dread is immaculate. deducting half a star because ', spoiler: 'the judy/camilla thing never lands for me', bodyPost: '', votes: 94, replies: 12, time: '1d', timebucket: 'day' },
-    { userId: 'sam', rating: 4, body: "henry winter is fiction's worst friend and i would do anything for him. shoutout to bunny for being the most realistically annoying character ever written.", votes: 267, replies: 41, time: '3d', timebucket: 'week' },
-    { userId: 'maya', rating: 5, body: 'read this in one sitting. the prose does things to me. normal reviewers: "i liked it." me: "i am becoming it."', votes: 58, replies: 8, time: '2w', timebucket: 'month' },
-  ]
+    await createBookPost(supabase, {
+      bookId: id,
+      title: threadTitle,
+      body: threadBody,
+    })
 
-  const threads = [
-    { title: 'Was Bunny actually likable? A case for the defense.', replies: 324, upvotes: 892, time: '4h', timebucket: 'day', author: 'avareads' },
-    { title: 'Richard as an unreliable narrator — evidence thread', replies: 198, upvotes: 621, time: '1d', timebucket: 'day', author: 'julesr' },
-    { title: 'Henry × Julian: reading list for the vibes', replies: 87, upvotes: 412, time: '2d', timebucket: 'week', author: 'mayamoss' },
-    { title: '[SPOILERS CH 1-3] First impressions of the group', replies: 56, upvotes: 198, time: '3w', timebucket: 'month', author: 'samreads' },
-    { title: 'Hot take: Camilla is the actual antagonist', replies: 412, upvotes: 1204, time: '4mo', timebucket: 'year', author: 'leopark' },
-  ]
-
-  const lists = [
-    { title: 'Dark academia starter pack', by: 'avareads', count: 12, saves: 2410 },
-    { title: 'Books that ruin your sleep schedule', by: 'julesr', count: 18, saves: 892 },
-    { title: 'If you liked The Secret History…', by: 'samreads', count: 9, saves: 1204 },
-  ]
-
-  const order: Record<string, number> = { day: 0, week: 1, month: 2, year: 3 }
-  const passTime = (bucket: string) => timeframe === 'all' || order[bucket] <= order[timeframe]
-  type Sortable = { votes?: number; upvotes?: number; timebucket: string }
-  const sortFn = (a: Sortable, b: Sortable) => {
-    if (sort === 'new') return 0
-    if (sort === 'top') return (b.votes || b.upvotes || 0) - (a.votes || a.upvotes || 0)
-    return (b.votes || b.upvotes || 0) * (b.timebucket === 'day' ? 3 : 1) - (a.votes || a.upvotes || 0) * (a.timebucket === 'day' ? 3 : 1)
+    setThreadTitle('')
+    setThreadBody('')
+    setShowThread(false)
+    await refreshThreads()
+    flash('Thread posted')
   }
 
-  const filteredThreads = threads.filter((t) => passTime(t.timebucket)).sort(sortFn)
-  const filteredReviews = reviews.filter((r) => passTime(r.timebucket)).sort(sortFn)
-  const filteredQuotes = quotes.filter((q) => passTime(q.timebucket)).sort(sortFn)
+  const submitLog = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!me) return flash('Sign in to log a session')
+
+    await logReadingSession(supabase, {
+      bookId: id,
+      pages: logPages ? Number(logPages) : undefined,
+      minutes: logMinutes ? Number(logMinutes) : undefined,
+      date: logDate,
+      notes: logNotes || undefined,
+    })
+
+    setLogPages('')
+    setLogMinutes('')
+    setLogNotes('')
+    setShowLog(false)
+    const awarded = await awardProgressBadges(supabase)
+    flash(formatToast('Session logged', awarded))
+  }
+
+  if (loading) {
+    return <div style={{ padding: 60, textAlign: 'center', color: 'var(--ink-3)' }}>Loading...</div>
+  }
+
+  if (!book) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        <h1 className="display-md">Book not found</h1>
+        <Link href="/search" className="btn btn-outline" style={{ marginTop: 16 }}>
+          Back to search
+        </Link>
+      </div>
+    )
+  }
+
+  const ui = toUiBook(book, book.stats)
+  const authorLine = ui.author || 'Unknown'
+  const shelf = userBook?.status ?? 'none'
+  const myRating = userBook?.rating ?? 0
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto' }}>
       <div style={{ position: 'relative', padding: '40px 40px 60px', background: 'linear-gradient(180deg, var(--paper-2), var(--paper))', borderBottom: '1px solid var(--border)' }}>
-        <Link href="/home" className="btn btn-ghost btn-sm" style={{ marginBottom: 20, display: 'inline-flex' }}>← Back</Link>
+        <Link href="/home" className="btn btn-ghost btn-sm" style={{ marginBottom: 20, display: 'inline-flex' }}>
+          Back
+        </Link>
         <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr auto', gap: 40, alignItems: 'start' }}>
           <div>
-            <Cover book={book} size={280} style={{ borderRadius: 8 }} />
+            <Cover book={ui} size={280} style={{ borderRadius: 8 }} />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setShelf('reading')}>
-                {shelf === 'reading' ? '✓ Reading' : '+ Start reading'}
+              <button
+                className="btn btn-pulp"
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={() => saveShelf(shelf === 'reading' ? 'read' : 'reading')}
+              >
+                {shelf === 'reading' ? 'Reading' : shelf === 'read' ? 'Read' : 'Start reading'}
               </button>
-              <button className="btn btn-outline" onClick={() => setShelf('want')}>{shelf === 'want' ? '✓' : '+ Want'}</button>
+              <button className="btn btn-outline" onClick={() => saveShelf('to_read')}>
+                {shelf === 'to_read' ? 'Saved' : 'Want'}
+              </button>
             </div>
-            <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => setShowLog(true)}>📖 Log a reading session</button>
+            <button
+              className="btn btn-outline btn-sm"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+              onClick={() => setShowLog(true)}
+            >
+              Log a reading session
+            </button>
           </div>
 
           <div>
-            <div className="eyebrow" style={{ marginBottom: 10 }}>{book.genre} · {book.year}</div>
+            <div className="eyebrow" style={{ marginBottom: 10 }}>
+              {ui.genre || 'Book'} {ui.year ? `· ${ui.year}` : ''}
+            </div>
             <h1 className="display-xl" style={{ marginBottom: 14 }}>{book.title}</h1>
-            <div style={{ fontSize: 18, color: 'var(--ink-2)', marginBottom: 24 }}>by <b style={{ color: 'var(--ink)' }}>{book.author}</b> <span style={{ color: 'var(--moss)', fontSize: 13 }}>✓ verified</span></div>
-
-            <div style={{ display: 'flex', gap: 32, marginBottom: 28 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span className="serif" style={{ fontSize: 44, color: 'var(--pulp)', lineHeight: 1 }}>{book.rating}</span>
-                  <span style={{ fontSize: 16, color: 'var(--ink-4)' }}>/ 5</span>
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{book.ratings.toLocaleString()} ratings</div>
-              </div>
-              <div>
-                <div className="serif" style={{ fontSize: 44, lineHeight: 1 }}>{book.pages}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>pages</div>
-              </div>
-              <div>
-                <div className="serif" style={{ fontSize: 44, lineHeight: 1 }}>2.8k</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>currently reading</div>
-              </div>
-              <div>
-                <div className="serif" style={{ fontSize: 44, lineHeight: 1 }}>142</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>active threads</div>
-              </div>
+            <div style={{ fontSize: 18, color: 'var(--ink-2)', marginBottom: 24 }}>
+              by <b style={{ color: 'var(--ink)' }}>{authorLine}</b>
             </div>
 
-            <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--ink-2)', maxWidth: 720, marginBottom: 20 }}>
-              Under the influence of their charismatic classics professor, a group of clever, eccentric misfits at an elite New England college discover a way of thinking and living that is a world away from the humdrum existence of their contemporaries.
-            </p>
+            <div style={{ display: 'flex', gap: 32, marginBottom: 28, flexWrap: 'wrap' }}>
+              <Metric value={book.stats.avg_rating ? book.stats.avg_rating.toFixed(1) : '-'} label={`${book.stats.rating_count.toLocaleString()} ratings`} accent />
+              {book.page_count && <Metric value={book.page_count} label="pages" />}
+              <Metric value={book.stats.read_count} label="readers" />
+              <Metric value={threads.length} label="threads" />
+            </div>
 
-            <div style={{ marginBottom: 8 }}>
-              <div className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ink-3)', marginBottom: 8 }}>Tags · searchable</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                {book.mood.map((m) => (
-                  <span key={m} className="chip chip-pulp">{m}</span>
+            {book.description && (
+              <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--ink-2)', maxWidth: 720, marginBottom: 20 }}>
+                {book.description}
+              </p>
+            )}
+
+            {book.genres.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {book.genres.map((genre) => (
+                  <span key={genre.id} className="chip chip-pulp">{genre.name}</span>
                 ))}
-                {tags.map((t) => (
-                  <span key={t} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    #{t}
-                    <button onClick={() => removeTag(t)} style={{ border: 'none', background: 'transparent', color: 'var(--ink-4)', cursor: 'pointer', padding: 0, fontSize: 12 }}>×</button>
+              </div>
+            )}
+
+            <div style={{ marginTop: 16 }}>
+              <div className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', marginBottom: 8 }}>
+                Tags
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {tags.map((tag) => (
+                  <span key={tag.id} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    #{tag.name}
+                    {me && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await removeTag(supabase, id, tag.id)
+                          setTags(await listBookTags(supabase, id))
+                        }}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--ink-3)', padding: 0, lineHeight: 1 }}
+                      >
+                        x
+                      </button>
+                    )}
                   </span>
                 ))}
-                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                  <input
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        addTag()
-                      }
+                {me && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+                      if (!tagInput.trim()) return
+                      await addTag(supabase, id, tagInput)
+                      setTagInput('')
+                      setTags(await listBookTags(supabase, id))
                     }}
-                    placeholder="+ add tag"
-                    style={{ padding: '4px 10px', borderRadius: 99, border: '1px dashed var(--border-2)', fontSize: 12, background: 'transparent', color: 'var(--ink-2)', width: 110 }}
-                  />
-                </div>
+                    style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}
+                  >
+                    <input
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      placeholder="add a tag"
+                      style={{ padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 999, fontSize: 12, minWidth: 150 }}
+                    />
+                    <button type="submit" className="btn btn-outline btn-sm">Add</button>
+                  </form>
+                )}
               </div>
             </div>
           </div>
@@ -178,274 +358,399 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
           <div className="card" style={{ padding: 20, width: 260, background: 'var(--ink)', color: 'var(--paper)', borderColor: 'var(--ink)' }}>
             <div className="eyebrow" style={{ color: 'var(--ink-4)', marginBottom: 12 }}>your rating</div>
             <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-              {[1, 2, 3, 4, 5].map((s) => (
-                <button key={s} onClick={() => setRating(s)} style={{ fontSize: 28, color: s <= rating ? 'var(--pulp)' : 'var(--ink-4)' }}>★</button>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => saveRating(star)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: 28,
+                    color: star <= myRating ? 'var(--pulp)' : 'var(--ink-4)',
+                  }}
+                >
+                  *
+                </button>
               ))}
             </div>
-            <button className="btn btn-pulp btn-sm" style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}>Write a review</button>
-            <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'center', color: 'var(--paper)', marginBottom: 8 }}>Start a thread</button>
-            <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'center', color: 'var(--paper)' }}>✎ Add a quote</button>
+            <button
+              className="btn btn-pulp btn-sm"
+              style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}
+              onClick={() => setShowReview(true)}
+            >
+              Write a review
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ width: '100%', justifyContent: 'center', color: 'var(--paper)' }}
+              onClick={() => setShowThread(true)}
+            >
+              Start a thread
+            </button>
           </div>
         </div>
       </div>
 
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '10px 20px',
+            background: 'var(--ink)',
+            color: 'var(--paper)',
+            borderRadius: 999,
+            zIndex: 200,
+            fontSize: 13,
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      {showReview && (
+        <Modal onClose={() => setShowReview(false)}>
+          <form onSubmit={submitReview}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Write a review</div>
+            <h3 className="serif" style={{ fontSize: 26, marginBottom: 14 }}>{book.title}</h3>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setReviewRating(star)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: 30,
+                    color: star <= reviewRating ? 'var(--pulp)' : 'var(--ink-4)',
+                  }}
+                >
+                  *
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={reviewBody}
+              onChange={(e) => setReviewBody(e.target.value)}
+              rows={5}
+              placeholder="What did you think?"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-3)', marginTop: 10 }}>
+              <input type="checkbox" checked={reviewSpoiler} onChange={(e) => setReviewSpoiler(e.target.checked)} />
+              Contains spoilers
+            </label>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Post review</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowReview(false)}>Cancel</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {showThread && (
+        <Modal onClose={() => setShowThread(false)}>
+          <form onSubmit={submitThread}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Start a thread</div>
+            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>{book.title}</h3>
+            <input
+              value={threadTitle}
+              onChange={(e) => setThreadTitle(e.target.value)}
+              placeholder="Thread title"
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 15, marginBottom: 10 }}
+            />
+            <textarea
+              value={threadBody}
+              onChange={(e) => setThreadBody(e.target.value)}
+              rows={5}
+              placeholder="What do you want to discuss?"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Post thread</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowThread(false)}>Cancel</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {showLog && (
-        <div onClick={() => setShowLog(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'grid', placeItems: 'center', padding: 20 }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ padding: 28, width: 480, maxWidth: '100%' }}>
-            <div className="eyebrow" style={{ marginBottom: 8 }}>📖 Log reading session</div>
-            <h3 className="serif" style={{ fontSize: 26, marginBottom: 4 }}>{book.title}</h3>
-            <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 20 }}>Syncs to your streak, heatmap, and yearly goals.</p>
+        <Modal onClose={() => setShowLog(false)}>
+          <form onSubmit={submitLog}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Log reading session</div>
+            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>{book.title}</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div>
                 <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Pages read</label>
-                <input defaultValue="32" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--paper)', color: 'var(--ink)' }} />
+                <input value={logPages} onChange={(e) => setLogPages(e.target.value)} type="number" min={0} style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
               </div>
               <div>
                 <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Minutes</label>
-                <input defaultValue="45" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--paper)', color: 'var(--ink)' }} />
+                <input value={logMinutes} onChange={(e) => setLogMinutes(e.target.value)} type="number" min={0} style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
               </div>
-              <div>
+              <div style={{ gridColumn: '1 / -1' }}>
                 <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Date</label>
-                <input type="date" defaultValue="2026-04-18" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--paper)', color: 'var(--ink)' }} />
-              </div>
-              <div>
-                <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Time</label>
-                <input type="time" defaultValue="21:30" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--paper)', color: 'var(--ink)' }} />
+                <input value={logDate} onChange={(e) => setLogDate(e.target.value)} type="date" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
               </div>
             </div>
             <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Notes (optional)</label>
-            <textarea rows={3} placeholder="What hit different?" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--paper)', color: 'var(--ink)', resize: 'vertical', fontFamily: 'inherit' }} />
+            <textarea value={logNotes} onChange={(e) => setLogNotes(e.target.value)} rows={3} placeholder="What hit different?" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setShowLog(false)}>Log session →</button>
-              <button className="btn btn-ghost" onClick={() => setShowLog(false)}>Cancel</button>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Log session</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowLog(false)}>Cancel</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       <div style={{ padding: '40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
         <main>
           <div className="tabs" style={{ marginBottom: 16 }}>
-            <button className={'tab' + (tab === 'threads' ? ' active' : '')} onClick={() => setTab('threads')}>Threads · {threads.length}</button>
-            <button className={'tab' + (tab === 'reviews' ? ' active' : '')} onClick={() => setTab('reviews')}>Reviews · {reviews.length}</button>
-            <button className={'tab' + (tab === 'quotes' ? ' active' : '')} onClick={() => setTab('quotes')}>Quotes · {quotes.length}</button>
-            <button className={'tab' + (tab === 'lists' ? ' active' : '')} onClick={() => setTab('lists')}>Lists · {lists.length}</button>
+            <button className={'tab' + (tab === 'threads' ? ' active' : '')} onClick={() => setTab('threads')}>
+              Threads · {threads.length}
+            </button>
+            <button className={'tab' + (tab === 'reviews' ? ' active' : '')} onClick={() => setTab('reviews')}>
+              Reviews · {reviews.length}
+            </button>
           </div>
-
-          {tab !== 'lists' && (
-            <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-                {([{ id: 'hot', label: '🔥 Hot' }, { id: 'top', label: '▲ Top' }, { id: 'new', label: '🆕 New' }] as const).map((s) => (
-                  <button key={s.id} onClick={() => setSort(s.id)} className="mono" style={{ padding: '7px 12px', fontSize: 11, background: sort === s.id ? 'var(--pulp-soft)' : 'transparent', color: sort === s.id ? 'var(--pulp)' : 'var(--ink-3)', border: 'none', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, cursor: 'pointer' }}>{s.label}</button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-                {([{ id: 'day', label: '24h' }, { id: 'week', label: 'Week' }, { id: 'month', label: 'Month' }, { id: 'year', label: 'Year' }, { id: 'all', label: 'All time' }] as const).map((t) => (
-                  <button key={t.id} onClick={() => setTimeframe(t.id)} className="mono" style={{ padding: '7px 12px', fontSize: 11, background: timeframe === t.id ? 'var(--pulp-soft)' : 'transparent', color: timeframe === t.id ? 'var(--pulp)' : 'var(--ink-3)', border: 'none', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, cursor: 'pointer' }}>{t.label}</button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {tab === 'threads' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {filteredThreads.map((t, i) => (
-                <div key={i} className="card" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 48, textAlign: 'center' }}>
-                    <div className="serif" style={{ fontSize: 24, color: 'var(--pulp)', lineHeight: 1 }}>↑</div>
-                    <div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{t.upvotes}</div>
+              {threads.map((thread) => {
+                const user = toUiUser(thread.profile)
+                const comments = commentsByPost[thread.id] ?? []
+                const commentsOpen = openComments[thread.id]
+
+                return (
+                  <div key={thread.id} className="card" style={{ padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                      <div style={{ width: 48, textAlign: 'center' }}>
+                        <div className="serif" style={{ fontSize: 24, color: 'var(--pulp)', lineHeight: 1 }}>↑</div>
+                        <div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{thread.upvotes}</div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{thread.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                          by @{user.handle} · {new Date(thread.created_at).toLocaleDateString()}
+                        </div>
+                        {thread.body && (
+                          <div style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 6, maxWidth: 720 }}>
+                            {thread.body}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={async () => {
+                          if (!commentsOpen && !commentsByPost[thread.id]) {
+                            await loadComments(thread.id)
+                          }
+                          setOpenComments((current) => ({ ...current, [thread.id]: !commentsOpen }))
+                        }}
+                      >
+                        <Icon name="message" size={13} /> Comments {thread.comment_count ?? comments.length}
+                      </button>
+                    </div>
+
+                    {commentsOpen && (
+                      <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+                        {comments.map((comment) => {
+                          const commenter = toUiUser(comment.profile)
+                          return (
+                            <div key={comment.id} style={{ padding: 12, borderRadius: 14, background: 'var(--paper-2)', border: '1px solid var(--border)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <Avatar user={commenter} size={22} />
+                                <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                                  <b style={{ color: 'var(--ink)' }}>@{commenter.handle}</b> · {new Date(comment.created_at).toLocaleDateString()}
+                                </div>
+                                {me?.id === comment.user_id && (
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ marginLeft: 'auto' }}
+                                    onClick={async () => {
+                                      await deleteComment(supabase, comment.id)
+                                      await loadComments(thread.id)
+                                      await refreshThreads()
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+                                {comment.contains_spoiler ? <Spoiler>{comment.body}</Spoiler> : comment.body}
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {me ? (
+                          <form
+                            onSubmit={async (e) => {
+                              e.preventDefault()
+                              const value = commentDrafts[thread.id]?.trim()
+                              if (!value) return
+                              await createComment(supabase, { postId: thread.id, body: value })
+                              setCommentDrafts((current) => ({ ...current, [thread.id]: '' }))
+                              await loadComments(thread.id)
+                              await refreshThreads()
+                            }}
+                            style={{ display: 'flex', gap: 8 }}
+                          >
+                            <input
+                              value={commentDrafts[thread.id] ?? ''}
+                              onChange={(e) => setCommentDrafts((current) => ({ ...current, [thread.id]: e.target.value }))}
+                              placeholder="Add a comment"
+                              style={{ flex: 1, padding: '10px 12px', borderRadius: 999, border: '1px solid var(--border)', fontSize: 13 }}
+                            />
+                            <button type="submit" className="btn btn-outline btn-sm">Reply</button>
+                          </form>
+                        ) : (
+                          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>Sign in to join the thread.</div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{t.title}</div>
-                    <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{t.replies} replies · {t.time} ago · by @{t.author}</div>
-                  </div>
-                  <button className="btn btn-outline btn-sm">Open</button>
+                )
+              })}
+
+              {threads.length === 0 && (
+                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                  No threads yet. Start the conversation.
                 </div>
-              ))}
-              {filteredThreads.length === 0 && (
-                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No threads in this window.</div>
               )}
             </div>
           )}
 
           {tab === 'reviews' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {filteredReviews.map((r, i) => {
-                const u = users.find((x) => x.id === r.userId)!
+              {reviews.map((review) => {
+                const user = toUiUser(review.profile)
+                const saved = savedReviewIds.includes(review.id)
                 return (
-                  <div key={i} className="card" style={{ padding: 20 }}>
+                  <div key={review.id} className="card" style={{ padding: 20 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                      <Avatar user={u} size={32} />
+                      <Avatar user={user} size={32} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>{u.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>@{u.handle} · {r.time}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>{user.name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                          @{user.handle} · {new Date(review.created_at).toLocaleDateString()}
+                        </div>
                       </div>
                       <div style={{ color: 'var(--pulp)', fontSize: 14 }}>
-                        {'★'.repeat(Math.floor(r.rating))}
-                        {r.rating % 1 ? '½' : ''}
-                        <span style={{ color: 'var(--ink-4)' }}>{'★'.repeat(5 - Math.ceil(r.rating))}</span>
+                        {'*'.repeat(Math.floor(review.rating))}
+                        <span style={{ color: 'var(--ink-4)' }}>{'*'.repeat(Math.max(0, 5 - Math.ceil(review.rating)))}</span>
                       </div>
                     </div>
                     <p style={{ fontSize: 15, lineHeight: 1.55 }}>
-                      {r.body}
-                      {r.spoiler && (
+                      {review.contains_spoiler ? (
                         <>
-                          <span className="spoiler-tag"> ⚠ SPOILER</span> <Spoiler>{r.spoiler}</Spoiler>
+                          <span className="spoiler-tag">Spoiler</span> <Spoiler>{review.body ?? ''}</Spoiler>
                         </>
+                      ) : (
+                        review.body
                       )}
-                      {r.bodyPost}
                     </p>
                     <div style={{ display: 'flex', gap: 6, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', alignItems: 'center' }}>
-                      <VoteBar initialScore={r.votes} />
-                      <button className="btn btn-ghost btn-sm"><Icon name="message" size={13} /> {r.replies}</button>
-                      <button className="btn btn-ghost btn-sm"><Icon name="bookmark" size={13} /> Save</button>
-                      <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}><Icon name="share" size={13} /> Share</button>
+                      <VoteBar initialScore={review.liked_count} />
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={async () => {
+                          const nextSaved = await toggleReviewSave(supabase, review.id)
+                          setSavedReviewIds((current) =>
+                            nextSaved ? [...current, review.id] : current.filter((id) => id !== review.id)
+                          )
+                        }}
+                      >
+                        <Icon name="bookmark" size={13} /> {saved ? 'Saved' : 'Save'}
+                      </button>
+                      <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                        <Icon name="share" size={13} /> Share
+                      </button>
                     </div>
                   </div>
                 )
               })}
-              {filteredReviews.length === 0 && (
-                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No reviews in this window.</div>
+
+              {reviews.length === 0 && (
+                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                  Be the first to review this book.
+                </div>
               )}
-            </div>
-          )}
-
-          {tab === 'quotes' && (
-            <>
-              <form onSubmit={addQuote} className="card" style={{ padding: 18, marginBottom: 16 }}>
-                <div className="eyebrow" style={{ marginBottom: 10 }}>✎ Share a quote</div>
-                <textarea
-                  value={newQuote}
-                  onChange={(e) => setNewQuote(e.target.value)}
-                  placeholder="Type a passage that hit…"
-                  rows={3}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 15, fontFamily: 'var(--font-display, serif)', fontStyle: 'italic', background: 'var(--paper-2)', color: 'var(--ink)', resize: 'vertical', marginBottom: 10 }}
-                />
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <input value={newQuotePage} onChange={(e) => setNewQuotePage(e.target.value)} placeholder="p.#" style={{ width: 80, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: 'var(--paper)', color: 'var(--ink)' }} />
-                  <button type="submit" className="btn btn-pulp btn-sm" style={{ marginLeft: 'auto' }}>Post quote</button>
-                </div>
-              </form>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {filteredQuotes.map((q) => {
-                  const u = users.find((x) => x.id === q.userId) ?? { id: 'brett', name: 'You', handle: 'brett', avatar: null, color: 'var(--pulp)' }
-                  return (
-                    <div key={q.id} className="card" style={{ padding: 22, position: 'relative', display: 'flex', gap: 16 }}>
-                      <button
-                        onClick={() => toggleQuoteVote(q.id)}
-                        style={{
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                          padding: '8px 10px', minWidth: 46, height: 'fit-content',
-                          border: '1px solid ' + (q.voted ? 'var(--pulp)' : 'var(--border)'),
-                          background: q.voted ? 'var(--pulp-soft)' : 'var(--paper)',
-                          color: q.voted ? 'var(--pulp)' : 'var(--ink-3)',
-                          borderRadius: 10, cursor: 'pointer',
-                        }}
-                      >
-                        <span style={{ fontSize: 13, lineHeight: 1 }}>▲</span>
-                        <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{q.votes}</span>
-                      </button>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 32, lineHeight: 1, color: 'var(--pulp)', fontFamily: 'var(--font-display, serif)', marginBottom: 4 }}>&quot;</div>
-                        <blockquote className="serif" style={{ fontSize: 19, lineHeight: 1.45, fontStyle: 'italic', margin: 0, marginBottom: 14, color: 'var(--ink)' }}>
-                          {q.body}
-                        </blockquote>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--ink-3)', flexWrap: 'wrap' }}>
-                          <Avatar user={u} size={22} />
-                          <span>
-                            <b>@{u.handle}</b> {q.mine && <span style={{ color: 'var(--pulp)' }}>· you</span>}
-                          </span>
-                          {q.page && <span>· p.{q.page}</span>}
-                          <span>· {q.time}</span>
-                          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                            <button className="btn btn-ghost btn-sm"><Icon name="message" size={13} /> {q.comments}</button>
-                            <button className="btn btn-ghost btn-sm"><Icon name="bookmark" size={13} /></button>
-                            <button className="btn btn-ghost btn-sm"><Icon name="share" size={13} /></button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-                {filteredQuotes.length === 0 && (
-                  <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No quotes in this window.</div>
-                )}
-              </div>
-            </>
-          )}
-
-          {tab === 'lists' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {lists.map((l, i) => (
-                <div key={i} className="card" style={{ padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 10, background: 'var(--pulp-soft)', color: 'var(--pulp)', display: 'grid', placeItems: 'center', fontSize: 22 }}>📑</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600 }}>{l.title}</div>
-                    <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{l.count} books · by @{l.by} · {l.saves.toLocaleString()} saves</div>
-                  </div>
-                  <button className="btn btn-outline btn-sm">Open list</button>
-                </div>
-              ))}
             </div>
           )}
         </main>
 
         <aside style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card" style={{ padding: 20 }}>
-            <div className="eyebrow" style={{ marginBottom: 12 }}>📊 Ratings distribution</div>
-            {[5, 4, 3, 2, 1].map((n) => {
-              const pct = [72, 56, 18, 8, 4][5 - n]
-              return (
-                <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 12 }}>
-                  <span className="mono" style={{ width: 20, color: 'var(--ink-3)' }}>{n}★</span>
-                  <div style={{ flex: 1, height: 8, background: 'var(--paper-2)', borderRadius: 99, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: pct + '%', background: 'var(--pulp)', borderRadius: 99 }} />
-                  </div>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', width: 30, textAlign: 'right' }}>{pct}%</span>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="card" style={{ padding: 20 }}>
-            <div className="eyebrow" style={{ marginBottom: 12 }}>👥 Your friends who read this</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {(['ava', 'maya', 'jules'] as const).map((id, idx) => {
-                const u = users.find((x) => x.id === id)!
-                const r = [5, 4.5, 4][idx]
-                return (
-                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <Avatar user={u} size={28} />
-                    <div style={{ flex: 1, fontSize: 13 }}>
-                      <b>{u.name}</b>
-                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>rated {r}★</div>
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="eyebrow" style={{ marginBottom: 12 }}>Quick stats</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.8 }}>
+              <div>Ratings: <b>{book.stats.rating_count.toLocaleString()}</b></div>
+              <div>Reviews: <b>{book.stats.review_count.toLocaleString()}</b></div>
+              <div>Readers: <b>{book.stats.read_count.toLocaleString()}</b></div>
+              {book.stats.avg_rating !== null && (
+                <div>Avg rating: <b style={{ color: 'var(--pulp)' }}>{book.stats.avg_rating.toFixed(2)}</b></div>
+              )}
             </div>
           </div>
 
-          <div className="card" style={{ padding: 20 }}>
-            <div className="eyebrow" style={{ marginBottom: 12 }}>📖 Similar reads</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {['bb', 'cr', 'pr'].map((id) => {
-                const b = books.find((x) => x.id === id)!
-                return (
-                  <Link key={id} href={`/book/${id}`} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <Cover book={b} size={40} />
-                    <div style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
-                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
-                      <div style={{ color: 'var(--ink-3)' }}>{b.author}</div>
-                    </div>
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--pulp)' }}>★ {b.rating}</span>
-                  </Link>
-                )
-              })}
+          {book.authors.length > 0 && (
+            <div className="card" style={{ padding: 20 }}>
+              <div className="eyebrow" style={{ marginBottom: 12 }}>
+                Author{book.authors.length > 1 ? 's' : ''}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {book.authors.map((author) => (
+                  <div key={author.id} style={{ fontSize: 14, fontWeight: 600 }}>{author.name}</div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </aside>
+      </div>
+    </div>
+  )
+}
+
+function Metric({
+  value,
+  label,
+  accent = false,
+}: {
+  value: string | number
+  label: string
+  accent?: boolean
+}) {
+  return (
+    <div>
+      <div className="serif" style={{ fontSize: 44, lineHeight: 1, color: accent ? 'var(--pulp)' : 'var(--ink)' }}>
+        {value}
+      </div>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+        {label}
+      </div>
+    </div>
+  )
+}
+
+function formatToast(base: string, awarded: { title: string }[]) {
+  if (!awarded.length) return base
+  return `${base} · badge unlocked: ${awarded.map((badge) => badge.title).join(', ')}`
+}
+
+function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'grid', placeItems: 'center', padding: 20 }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ padding: 28, width: 520, maxWidth: '100%' }}>
+        {children}
       </div>
     </div>
   )

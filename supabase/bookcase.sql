@@ -1131,8 +1131,10 @@ create policy "Authenticated users can insert tags" on tags for insert with chec
 
 drop policy if exists "Book tags are viewable by everyone" on book_tags;
 drop policy if exists "Authenticated users can insert book tags" on book_tags;
+drop policy if exists "Authenticated users can delete book tags" on book_tags;
 create policy "Book tags are viewable by everyone"         on book_tags for select using (true);
 create policy "Authenticated users can insert book tags"   on book_tags for insert with check (auth.role() = 'authenticated');
+create policy "Authenticated users can delete book tags"   on book_tags for delete using (auth.role() = 'authenticated');
 
 -- Seed thematic tags
 insert into tags (name, slug, category) values
