@@ -2,10 +2,16 @@
 
 Most of the Supabase wiring work is now live. The redesign, mobile layout, auth, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, and roadmap all read real data through `lib/db.ts`.
 
-## Status for 2026-04-20
+## Status for 2026-04-20 (latest push)
 
-- Done today: clubs, club detail, club membership, club posting, post comments, profile favorites, reading goals, badges, book tags, review saves, and activity-event writes are implemented.
+- Done today (earlier Codex pass): clubs, club detail, club membership, club posting, post comments, profile favorites, reading goals, badges, book tags, review saves, activity-event writes.
 - Build fix: public Supabase config now has repo-safe fallbacks, so Cloudflare prerender no longer depends on `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` being injected during build.
+- Done in follow-up push (commit 0014792):
+  - Review likes write to the `likes` table via [components/redesign/LikeButton.tsx](components/redesign/LikeButton.tsx) with optimistic UI.
+  - Share buttons (book, review, thread) use Web Share API with clipboard fallback via [lib/share.ts](lib/share.ts).
+  - Settings page loads and persists real profile fields (display name, username, bio, location) plus local-only privacy and notification toggles.
+  - Search covers books (title and author), readers, and public clubs with All/Books/Readers/Clubs tabs.
+  - Notifications now insert on follow, post upvote, post comment, review like, and club join. RLS requires `actor_id = auth.uid()`, which is always satisfied.
 - Main follow-up: run a manual live smoke test after the next deploy.
 
 ## Architecture
@@ -18,38 +24,41 @@ Most of the Supabase wiring work is now live. The redesign, mobile layout, auth,
 - Auth client: client pages use `useMemo(() => createClient(), [])` for a stable Supabase instance
 - Public config: [lib/supabase/config.ts](lib/supabase/config.ts) provides safe fallbacks for the public URL and anon key
 
-## Remaining Feature Gaps for Tomorrow
+## Remaining Gaps
 
-### 1. Search only covers titles
-- [app/(main)/search/page.tsx](app/(main)/search/page.tsx) is wired to the real database, but results are still limited to book titles.
-- The UI still implies broader discovery, so authors, moods, readers, clubs, and discussion results either need to be added or the copy should be narrowed.
+### 1. Manual deployed smoke test (highest priority)
+- Nothing has been verified end-to-end on the live Cloudflare Worker since the latest wiring.
+- Suggested path: sign up -> sign in -> search (try a book title, an author name, a username, a club) -> rate -> shelf -> review -> like another user's review -> share (should copy a link) -> post a thread -> comment -> upvote -> join club -> log session -> verify streak, profile stats, and the notifications inbox actually fills up.
 
-### 2. Settings page is still a static shell
-- `/settings` is mostly presentational right now.
-- Preferences, account controls, and notification toggles are not persisted yet.
+### 2. Notification preference toggles are client-only
+- The toggles on [app/(main)/settings/page.tsx](app/(main)/settings/page.tsx) persist to `localStorage` under `bookcase:prefs` but don't gate actual writes.
+- If a user turns off "new followers" notifications, we still insert a `follow` row. Decide whether to: (a) add a `notification_prefs` table, (b) skip inserts at source based on the recipient's prefs, or (c) hide preferences until they mean something.
 
-### 3. Review likes and reactions are still local-only
-- Review cards render a `VoteBar`, but those interactions are not saved to Supabase.
-- If the live site supports review likes, we still need a real table or write path plus optimistic updates.
+### 3. Mentions / `list_mention` notifications
+- The notification `type` check allows `list_mention`, but nothing in the app generates mentions yet.
+- Either wire `@username` parsing in comments/posts or remove the claim from the notifications type map.
 
-### 4. Share actions are UI-only
-- Book, review, and post share buttons do not trigger a real share flow yet.
-- We should wire native share or copy-link behavior, or hide those controls until they work.
+### 4. `roadmap_status` notifications
+- When an admin flips a feature to `in_progress` or `completed`, voters should get a `roadmap_status` notification.
+- Current RLS requires `actor_id = auth.uid()`, so this likely needs either an admin role or a Postgres trigger running as a service role.
 
-### 5. Notifications are readable but not generated
-- [app/(main)/notifications/page.tsx](app/(main)/notifications/page.tsx) can list and mark notifications read.
-- The app still does not insert notification rows when people comment, join clubs, upvote, or interact elsewhere, so the inbox stays sparse.
+### 5. Thread upvote button on book page is display-only
+- The threads section renders the upvote count but has no click handler. `togglePostUpvote(postId)` already exists in [lib/db.ts](lib/db.ts) — just wire it up like `LikeButton`.
 
-### 6. Manual deployed smoke test
-- Nothing has been verified end-to-end on the live Cloudflare Worker after the latest data wiring.
-- Suggested path: sign up -> sign in -> search -> rate -> shelf -> review -> post -> comment -> join club -> log session -> verify streak, profile, and notifications.
+### 6. Share action copy confirmation is a flash toast
+- Works, but consider a visible "copied!" chip on the button itself for touch devices where the toast appears far away from the tap target.
+
+### 7. Search results are uncached
+- Three parallel queries per keystroke (180 ms debounced). Fine for now, but if the books table grows we should push to Postgres full-text search or cache author lookups.
 
 ## File Map
 
-- [lib/db.ts](lib/db.ts): Supabase queries, types, and DB-to-UI adapters
+- [lib/db.ts](lib/db.ts): Supabase queries, types, and DB-to-UI adapters. `insertNotification` helper at top is the single place that writes to `notifications`.
+- [lib/share.ts](lib/share.ts): Web Share API wrapper with clipboard + textarea fallbacks. Returns `'shared' | 'copied' | 'failed'`.
 - [lib/supabase/client.ts](lib/supabase/client.ts) and [lib/supabase/server.ts](lib/supabase/server.ts): browser and server Supabase factories
 - [lib/supabase/config.ts](lib/supabase/config.ts): shared public Supabase config with repo-safe fallbacks
 - [app/auth/signout/route.ts](app/auth/signout/route.ts): POST handler for sidebar signout
+- [components/redesign/LikeButton.tsx](components/redesign/LikeButton.tsx): optimistic review-like button backed by `toggleLike`.
 - [components/redesign/Sidebar.tsx](components/redesign/Sidebar.tsx): real profile, unread count, and streak data
 - [components/redesign/home/PostComposer.tsx](components/redesign/home/PostComposer.tsx): inline book picker and post form
 
@@ -61,10 +70,12 @@ Most of the Supabase wiring work is now live. The redesign, mobile layout, auth,
 - Supabase nested joins need FK hints when there are multiple foreign keys between two tables
 - `roadmap_features.has_voted` is hydrated per request from `roadmap_votes`; it is not a stored column
 - Async page params in Next 15 should use `use()` in client components or `await params` in server components
+- `notifications` RLS requires `auth.uid() = actor_id`. Any notification inserted from the client must pass the current user as actor. `insertNotification` skips self-notifications (when recipient === actor).
+- `components/redesign/home/ReviewCard.tsx` is legacy — it still imports from `lib/redesign-data` but isn't mounted anywhere. Safe to delete whenever.
 
 ## Commit Style
 
 Lowercase imperative, short, no ticket prefix. Recent examples:
-- `add mobile layout: hamburger drawer, responsive grids, viewport meta`
-- `fix broken main layout: drop grid shell, use margin-left offset`
-- `fix Cover size prop to accept string for percentage widths`
+- `wire review likes, share actions, settings, expanded search, event notifications`
+- `finish codex handoff features`
+- `fix cloudflare supabase build config`
