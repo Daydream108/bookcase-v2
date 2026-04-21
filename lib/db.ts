@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { GoodreadsImportEntry } from './goodreads'
 
 type Client = SupabaseClient
 type JsonMap = Record<string, unknown>
@@ -217,6 +218,11 @@ export type DbTag = {
   created_at: string
 }
 
+type ImportedListRecord = {
+  id: string
+  title: string
+}
+
 const BOOK_SELECT = `
   id, title, subtitle, cover_url, description, published_year, page_count, isbn,
   book_authors ( authors ( id, name ) ),
@@ -298,6 +304,36 @@ function titleize(input: string) {
     .filter(Boolean)
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(' ')
+}
+
+function normalizeLookupValue(input: string) {
+  return input
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function escapeLikePattern(input: string) {
+  return input.replace(/([%_\\])/g, '\\$1')
+}
+
+function normalizeImportedIsbn(input?: string | null) {
+  return input?.replace(/[^0-9Xx]/g, '').toUpperCase() || null
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function formatImportedListTitle(name: string) {
+  const titled = titleize(name.replace(/[-_]+/g, ' '))
+  return normalizeLookupValue(titled) === 'dnf' ? 'DNF' : titled
 }
 
 function countByKey<T extends string>(rows: { [K in T]: string }[], key: T) {
@@ -528,17 +564,31 @@ export async function searchBooks(
 
   const like = `%${query.replace(/%/g, '\\%')}%`
 
-  const [titleMatches, authorMatches] = await Promise.all([
-    supabase.from('books').select(BOOK_SELECT).ilike('title', like).limit(limit),
+  const [directMatches, authorMatches, genreMatches, tagMatches] = await Promise.all([
+    supabase
+      .from('books')
+      .select(BOOK_SELECT)
+      .or(`title.ilike.${like},subtitle.ilike.${like},description.ilike.${like}`)
+      .limit(limit),
     supabase
       .from('authors')
       .select('id, book_authors ( book:books ( ' + BOOK_SELECT + ' ) )')
       .ilike('name', like)
       .limit(10),
+    supabase
+      .from('genres')
+      .select('id, book_genres ( book:books ( ' + BOOK_SELECT + ' ) )')
+      .ilike('name', like)
+      .limit(10),
+    supabase
+      .from('tags')
+      .select('id, book_tags ( book:books ( ' + BOOK_SELECT + ' ) )')
+      .ilike('name', like)
+      .limit(10),
   ])
 
   const byId = new Map<string, DbBookWithAuthors>()
-  for (const row of titleMatches.data ?? []) {
+  for (const row of directMatches.data ?? []) {
     const mapped = mapBookWithAuthors(row)
     byId.set(mapped.id, mapped)
   }
@@ -546,6 +596,20 @@ export async function searchBooks(
     for (const ba of author.book_authors ?? []) {
       if (ba.book && !byId.has(ba.book.id)) {
         byId.set(ba.book.id, mapBookWithAuthors(ba.book))
+      }
+    }
+  }
+  for (const genre of (genreMatches.data ?? []) as any[]) {
+    for (const bg of genre.book_genres ?? []) {
+      if (bg.book && !byId.has(bg.book.id)) {
+        byId.set(bg.book.id, mapBookWithAuthors(bg.book))
+      }
+    }
+  }
+  for (const tag of (tagMatches.data ?? []) as any[]) {
+    for (const bt of tag.book_tags ?? []) {
+      if (bt.book && !byId.has(bt.book.id)) {
+        byId.set(bt.book.id, mapBookWithAuthors(bt.book))
       }
     }
   }
@@ -564,7 +628,7 @@ export async function searchProfiles(
   const { data } = await supabase
     .from('profiles')
     .select('*')
-    .or(`username.ilike.${like},display_name.ilike.${like}`)
+    .or(`username.ilike.${like},display_name.ilike.${like},bio.ilike.${like}`)
     .limit(limit)
   return (data ?? []) as DbProfile[]
 }
@@ -581,9 +645,32 @@ export async function searchClubsByName(
     .from('clubs')
     .select(`*, current_book:books ( ${BOOK_SELECT} )`)
     .eq('is_public', true)
-    .ilike('name', like)
+    .or(`name.ilike.${like},description.ilike.${like}`)
     .limit(limit)
   return (data ?? []).map(mapClub)
+}
+
+export async function searchBookPosts(
+  supabase: Client,
+  q: string,
+  limit = 12
+): Promise<DbBookPost[]> {
+  const query = q.trim()
+  if (!query) return []
+  const like = `%${query.replace(/%/g, '\\%')}%`
+  const { data } = await supabase
+    .from('book_posts')
+    .select(`*, profile:profiles!book_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
+    .or(`title.ilike.${like},body.ilike.${like}`)
+    .order('upvotes', { ascending: false, nullsFirst: false })
+    .limit(limit)
+
+  const mapped = (data ?? []).map((row: any) => ({
+    ...(row as DbBookPost),
+    book: row.book ? mapBookWithAuthors(row.book) : null,
+  }))
+
+  return hydrateBookPostCounts(supabase, mapped)
 }
 
 export async function getBook(supabase: Client, bookId: string): Promise<DbBookWithAuthors | null> {
@@ -724,6 +811,343 @@ export async function getUserBook(
   return (data as DbUserBook) ?? null
 }
 
+function cacheImportedBook(
+  cache: Map<string, DbBookWithAuthors>,
+  book: DbBookWithAuthors,
+  titleKey: string,
+  isbnCandidates: string[]
+) {
+  cache.set(titleKey, book)
+  for (const isbn of isbnCandidates) cache.set(`isbn:${isbn}`, book)
+}
+
+async function findImportedBook(
+  supabase: Client,
+  entry: GoodreadsImportEntry,
+  cache: Map<string, DbBookWithAuthors>
+) {
+  const isbnCandidates = [normalizeImportedIsbn(entry.isbn13), normalizeImportedIsbn(entry.isbn)].filter(
+    Boolean
+  ) as string[]
+
+  for (const isbn of isbnCandidates) {
+    const cached = cache.get(`isbn:${isbn}`)
+    if (cached) return cached
+
+    const { data } = await supabase.from('books').select(BOOK_SELECT).eq('isbn', isbn).maybeSingle()
+    if (data) {
+      const book = mapBookWithAuthors(data)
+      cacheImportedBook(cache, book, `title:${normalizeLookupValue(book.title)}`, isbnCandidates)
+      return book
+    }
+  }
+
+  const titleKey = `title:${normalizeLookupValue(entry.title)}|authors:${entry.authors
+    .map(normalizeLookupValue)
+    .sort()
+    .join('|')}`
+  const cached = cache.get(titleKey)
+  if (cached) return cached
+
+  const authorKeys = new Set(entry.authors.map(normalizeLookupValue))
+  const normalizedTitle = normalizeLookupValue(entry.title)
+  const fallbackTitle = `%${escapeLikePattern(entry.title.trim())}%`
+  const { data } = await supabase
+    .from('books')
+    .select(BOOK_SELECT)
+    .ilike('title', fallbackTitle)
+    .limit(12)
+
+  const candidates = (data ?? []).map(mapBookWithAuthors)
+  const match =
+    candidates.find((book) => {
+      if (normalizeLookupValue(book.title) !== normalizedTitle) return false
+      if (!authorKeys.size) return true
+      return book.authors.some((author) => authorKeys.has(normalizeLookupValue(author.name)))
+    }) ??
+    candidates.find((book) => {
+      if (!authorKeys.size) return normalizeLookupValue(book.title) === normalizedTitle
+      const bookTitle = normalizeLookupValue(book.title)
+      const titleClose = bookTitle.includes(normalizedTitle) || normalizedTitle.includes(bookTitle)
+      return titleClose && book.authors.some((author) => authorKeys.has(normalizeLookupValue(author.name)))
+    })
+
+  if (match) {
+    cacheImportedBook(cache, match, titleKey, isbnCandidates)
+    return match
+  }
+
+  return null
+}
+
+async function findOrCreateImportedAuthors(
+  supabase: Client,
+  authorNames: string[],
+  cache: Map<string, string>
+) {
+  const ids: string[] = []
+
+  for (const authorName of authorNames) {
+    const normalized = normalizeLookupValue(authorName)
+    if (!normalized) continue
+
+    const cached = cache.get(normalized)
+    if (cached) {
+      ids.push(cached)
+      continue
+    }
+
+    const { data: existing } = await supabase
+      .from('authors')
+      .select('id, name')
+      .ilike('name', escapeLikePattern(authorName.trim()))
+      .limit(5)
+
+    const match =
+      (existing ?? []).find((author: any) => normalizeLookupValue(author.name) === normalized) ?? null
+
+    if (match) {
+      cache.set(normalized, match.id)
+      ids.push(match.id)
+      continue
+    }
+
+    const { data: inserted, error } = await supabase
+      .from('authors')
+      .insert({ name: authorName.trim() })
+      .select('id')
+      .single()
+
+    if (error) throw error
+    cache.set(normalized, inserted.id)
+    ids.push(inserted.id)
+  }
+
+  return Array.from(new Set(ids))
+}
+
+async function findOrCreateImportedBook(
+  supabase: Client,
+  entry: GoodreadsImportEntry,
+  bookCache: Map<string, DbBookWithAuthors>,
+  authorCache: Map<string, string>
+) {
+  const existing = await findImportedBook(supabase, entry, bookCache)
+  if (existing) return { book: existing, created: false }
+
+  const authorIds = await findOrCreateImportedAuthors(supabase, entry.authors, authorCache)
+  const canonicalIsbn = normalizeImportedIsbn(entry.isbn13) ?? normalizeImportedIsbn(entry.isbn)
+
+  const { data: inserted, error } = await supabase
+    .from('books')
+    .insert({
+      title: entry.title.trim(),
+      isbn: canonicalIsbn,
+      page_count: entry.pageCount ?? null,
+      published_year: entry.originalPublicationYear ?? entry.yearPublished ?? null,
+    })
+    .select('id, title, subtitle, cover_url, description, published_year, page_count, isbn')
+    .single()
+
+  if (error) {
+    const retry = await findImportedBook(supabase, entry, bookCache)
+    if (retry) return { book: retry, created: false }
+    throw error
+  }
+
+  if (authorIds.length) {
+    const { error: linkError } = await supabase.from('book_authors').upsert(
+      authorIds.map((authorId) => ({
+        book_id: inserted.id,
+        author_id: authorId,
+      })),
+      { onConflict: 'book_id,author_id' }
+    )
+
+    if (linkError) throw linkError
+  }
+
+  const { data: hydrated, error: hydrateError } = await supabase
+    .from('books')
+    .select(BOOK_SELECT)
+    .eq('id', inserted.id)
+    .single()
+
+  if (hydrateError) throw hydrateError
+
+  const book = mapBookWithAuthors(hydrated)
+  cacheImportedBook(
+    bookCache,
+    book,
+    `title:${normalizeLookupValue(entry.title)}|authors:${entry.authors
+      .map(normalizeLookupValue)
+      .sort()
+      .join('|')}`,
+    [canonicalIsbn].filter(Boolean) as string[]
+  )
+
+  return { book, created: true }
+}
+
+async function upsertImportedUserBookRecord(
+  supabase: Client,
+  userId: string,
+  bookId: string,
+  entry: GoodreadsImportEntry
+) {
+  const fallbackStatus =
+    entry.status ?? (entry.rating !== null || entry.review || entry.dateRead ? 'read' : null)
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    book_id: bookId,
+  }
+
+  let shouldWrite = false
+
+  if (fallbackStatus) {
+    payload.status = fallbackStatus
+    shouldWrite = true
+  }
+
+  if (entry.rating !== null) {
+    payload.rating = entry.rating
+    shouldWrite = true
+  }
+
+  if (entry.dateRead) {
+    payload.finished_at = entry.dateRead
+    shouldWrite = true
+  }
+
+  if (fallbackStatus === 'reading' && entry.dateAdded) {
+    payload.started_at = entry.dateAdded
+    shouldWrite = true
+  }
+
+  if (entry.readCount > 1) {
+    payload.is_reread = true
+    shouldWrite = true
+  }
+
+  if (!shouldWrite) return null
+
+  const { data, error } = await supabase
+    .from('user_books')
+    .upsert(payload, { onConflict: 'user_id,book_id' })
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return data as DbUserBook
+}
+
+async function upsertImportedReviewRecord(
+  supabase: Client,
+  userId: string,
+  bookId: string,
+  userBookId: string | null,
+  entry: GoodreadsImportEntry
+) {
+  if (!entry.review) return false
+
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    book_id: bookId,
+    user_book_id: userBookId,
+    body: entry.review,
+    contains_spoiler: entry.spoiler,
+  }
+
+  if (entry.rating !== null) payload.rating = entry.rating
+
+  const { error } = await supabase.from('reviews').upsert(payload, {
+    onConflict: 'user_id,book_id',
+  })
+
+  if (error) throw error
+  return true
+}
+
+async function loadImportedLists(supabase: Client, userId: string) {
+  const { data, error } = await supabase
+    .from('lists')
+    .select('id, title')
+    .eq('user_id', userId)
+
+  if (error) throw error
+
+  const cache = new Map<string, ImportedListRecord>()
+  for (const row of (data ?? []) as ImportedListRecord[]) {
+    const key = normalizeLookupValue(row.title)
+    if (!cache.has(key)) cache.set(key, row)
+  }
+
+  return cache
+}
+
+async function ensureImportedList(
+  supabase: Client,
+  userId: string,
+  cache: Map<string, ImportedListRecord>,
+  shelfName: string
+) {
+  const title = formatImportedListTitle(shelfName)
+  const key = normalizeLookupValue(title)
+  const existing = cache.get(key)
+  if (existing) return { id: existing.id, created: false }
+
+  const { data, error } = await supabase
+    .from('lists')
+    .insert({
+      user_id: userId,
+      title,
+      description: 'Imported from Goodreads',
+      is_public: false,
+    })
+    .select('id, title')
+    .single()
+
+  if (error) throw error
+
+  const record = data as ImportedListRecord
+  cache.set(key, record)
+  return { id: record.id, created: true }
+}
+
+async function upsertImportedListItems(
+  supabase: Client,
+  listId: string,
+  assignments: { bookId: string; position: number | null; sequence: number }[]
+) {
+  const deduped = new Map<string, { bookId: string; position: number | null; sequence: number }>()
+
+  for (const assignment of assignments) {
+    deduped.set(assignment.bookId, assignment)
+  }
+
+  const ordered = Array.from(deduped.values()).sort((left, right) => {
+    if (left.position !== null && right.position !== null) return left.position - right.position
+    if (left.position !== null) return -1
+    if (right.position !== null) return 1
+    return left.sequence - right.sequence
+  })
+
+  const payload = ordered.map((assignment, index) => ({
+    list_id: listId,
+    book_id: assignment.bookId,
+    position: assignment.position ?? index + 1,
+  }))
+
+  for (const chunk of chunkArray(payload, 200)) {
+    const { error } = await supabase.from('list_items').upsert(chunk, {
+      onConflict: 'list_id,book_id',
+    })
+    if (error) throw error
+  }
+
+  return payload.length
+}
+
 export async function upsertUserBook(
   supabase: Client,
   input: {
@@ -794,6 +1218,118 @@ export async function upsertUserBook(
   }
 
   return row
+}
+
+export async function importGoodreadsLibrary(
+  supabase: Client,
+  entries: GoodreadsImportEntry[],
+  options: {
+    includeReviews?: boolean
+    includeCustomShelves?: boolean
+    onProgress?: (progress: { current: number; total: number; title: string }) => void
+  } = {}
+) {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const includeReviews = options.includeReviews ?? true
+  const includeCustomShelves = options.includeCustomShelves ?? true
+  const cleanedEntries = entries.filter((entry) => entry.title.trim() && entry.authors.length)
+  const bookCache = new Map<string, DbBookWithAuthors>()
+  const authorCache = new Map<string, string>()
+  const yearsToSync = new Set<number>()
+  const shelfAssignments = new Map<string, { bookId: string; position: number | null; sequence: number }[]>()
+  const listCache = includeCustomShelves ? await loadImportedLists(supabase, user.id) : new Map()
+
+  let imported = 0
+  let matched = 0
+  let created = 0
+  let updatedShelves = 0
+  let importedReviews = 0
+  let createdLists = 0
+  let addedToLists = 0
+  let skipped = 0
+  const errors: string[] = []
+
+  for (let index = 0; index < cleanedEntries.length; index += 1) {
+    const entry = cleanedEntries[index]
+
+    try {
+      const { book, created: createdBook } = await findOrCreateImportedBook(
+        supabase,
+        entry,
+        bookCache,
+        authorCache
+      )
+
+      if (createdBook) created += 1
+      else matched += 1
+
+      const userBook = await upsertImportedUserBookRecord(supabase, user.id, book.id, entry)
+      if (userBook) {
+        updatedShelves += 1
+        if (userBook.finished_at) yearsToSync.add(new Date(userBook.finished_at).getFullYear())
+      }
+
+      if (includeReviews) {
+        const wroteReview = await upsertImportedReviewRecord(
+          supabase,
+          user.id,
+          book.id,
+          userBook?.id ?? null,
+          entry
+        )
+        if (wroteReview) importedReviews += 1
+      }
+
+      if (includeCustomShelves) {
+        for (const shelf of entry.customShelves) {
+          const assignments = shelfAssignments.get(shelf.name) ?? []
+          assignments.push({
+            bookId: book.id,
+            position: shelf.position,
+            sequence: index,
+          })
+          shelfAssignments.set(shelf.name, assignments)
+        }
+      }
+
+      imported += 1
+    } catch (error) {
+      skipped += 1
+      errors.push(`${entry.title} by ${entry.authors[0]}: ${(error as Error).message}`)
+    } finally {
+      options.onProgress?.({
+        current: index + 1,
+        total: cleanedEntries.length,
+        title: entry.title,
+      })
+    }
+  }
+
+  if (includeCustomShelves) {
+    for (const [shelfName, assignments] of shelfAssignments.entries()) {
+      const list = await ensureImportedList(supabase, user.id, listCache, shelfName)
+      if (list.created) createdLists += 1
+      addedToLists += await upsertImportedListItems(supabase, list.id, assignments)
+    }
+  }
+
+  for (const year of yearsToSync) {
+    await syncReadingGoalProgress(supabase, user.id, year)
+  }
+
+  return {
+    imported,
+    matched,
+    created,
+    updatedShelves,
+    importedReviews,
+    createdLists,
+    addedToLists,
+    skipped,
+    errors,
+  }
 }
 
 export async function listShelf(

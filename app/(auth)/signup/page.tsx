@@ -23,7 +23,7 @@ export default function SignupPage() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name } },
+      options: { data: { display_name: name } },
     })
     setLoading(false)
     if (signUpError) {
@@ -31,7 +31,7 @@ export default function SignupPage() {
       return
     }
     if (data.session) {
-      router.push('/home')
+      router.push('/import?source=signup')
       router.refresh()
       return
     }

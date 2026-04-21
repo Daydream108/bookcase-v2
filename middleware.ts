@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { type NextRequest, NextResponse } from 'next/server'
 import { supabaseAnonKey, supabaseUrl } from './lib/supabase/config'
 
-const protectedRoutes = ['/home', '/settings', '/notifications', '/streak']
+const protectedRoutes = ['/home', '/import', '/settings', '/notifications', '/streak']
 const authRoutes = ['/login', '/signup']
 
 export async function middleware(request: NextRequest) {

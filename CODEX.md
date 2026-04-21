@@ -4,7 +4,7 @@ Most of the Supabase wiring work is now live. The redesign, mobile layout, auth,
 
 ## Status for 2026-04-20 (latest push)
 
-See **Next Features** section below for the active feature queue (half-star ratings, downvotes, comment replies, bookcase visual, explore sizing fix).
+See **Next Features** section below for the active feature queue (half-star ratings, downvotes, comment replies, explore sizing fix, and remaining bookcase polish).
 
 
 - Done today (earlier Codex pass): clubs, club detail, club membership, club posting, post comments, profile favorites, reading goals, badges, book tags, review saves, activity-event writes.
@@ -15,6 +15,11 @@ See **Next Features** section below for the active feature queue (half-star rati
   - Settings page loads and persists real profile fields (display name, username, bio, location) plus local-only privacy and notification toggles.
   - Search covers books (title and author), readers, and public clubs with All/Books/Readers/Clubs tabs.
   - Notifications now insert on follow, post upvote, post comment, review like, and club join. RLS requires `actor_id = auth.uid()`, which is always satisfied.
+- Done in current local work (pending push):
+  - Search now also covers descriptions, genres, tags, and live threads, with Vibes and Threads result sections on [app/(main)/search/page.tsx](app/(main)/search/page.tsx).
+  - Profile now uses the wooden three-shelf bookcase visual on [app/(main)/profile/[username]/page.tsx](app/(main)/profile/[username]/page.tsx) with the reusable component in [components/redesign/Bookcase.tsx](components/redesign/Bookcase.tsx).
+  - New accounts now route into a Goodreads CSV onboarding flow on [app/(main)/import/page.tsx](app/(main)/import/page.tsx), backed by parser utilities in [lib/goodreads.ts](lib/goodreads.ts) and bulk-safe import helpers in [lib/db.ts](lib/db.ts).
+  - Goodreads import maps read / currently-reading / to-read states into `user_books`, brings over ratings and review text, and creates private Bookcase lists from custom Goodreads shelves without flooding the activity feed.
 - Main follow-up: run a manual live smoke test after the next deploy.
 
 ## Architecture
@@ -31,7 +36,7 @@ See **Next Features** section below for the active feature queue (half-star rati
 
 ### 1. Manual deployed smoke test (highest priority)
 - Nothing has been verified end-to-end on the live Cloudflare Worker since the latest wiring.
-- Suggested path: sign up -> sign in -> search (try a book title, an author name, a username, a club) -> rate -> shelf -> review -> like another user's review -> share (should copy a link) -> post a thread -> comment -> upvote -> join club -> log session -> verify streak, profile stats, and the notifications inbox actually fills up.
+- Suggested path: sign up -> Goodreads import -> sign in -> search (try a book title, an author name, a username, a club) -> rate -> shelf -> review -> like another user's review -> share (should copy a link) -> post a thread -> comment -> upvote -> join club -> log session -> verify streak, profile stats, imported lists, and the notifications inbox actually fills up.
 
 ### 2. Notification preference toggles are client-only
 - The toggles on [app/(main)/settings/page.tsx](app/(main)/settings/page.tsx) persist to `localStorage` under `bookcase:prefs` but don't gate actual writes.
@@ -74,6 +79,8 @@ See **Next Features** section below for the active feature queue (half-star rati
 - Target: 160-180px max-width tiles, CSS grid `repeat(auto-fill, minmax(160px, 1fr))`. Or switch to a Letterboxd-style poster wall with smaller covers + more per row.
 
 ### E. Animated bookcase on profile page (biggest visual feature)
+- Core version is now implemented locally with a three-shelf wooden bookcase, fixed favorites row, pickable lower rows, and a pull-out preview card.
+- Remaining polish: persist shelf row config to Supabase instead of `localStorage`, support custom named rows/lists, and refine the animation feel.
 - Screenshot shows a wooden 3-shelf bookcase on the user's profile with real spines: author surname printed vertically on the spine, title across the top, natural cloth/leather spine colors keyed to each book.
 - Shelves are fixed at **3 rows** for now.
 - **Row 1 is always Favorites** — user can't rename or reassign row 1.
@@ -89,6 +96,7 @@ See **Next Features** section below for the active feature queue (half-star rati
 - No "add a book" flow — if a book isn't in Supabase already, the user hits a dead end. Needs an Open Library / Google Books import on empty search.
 - Most `cover_url` fields are null — covers fall back to the colored card. Consider a backfill job that queries Open Library by ISBN.
 - No onboarding for new signups — they land on an empty `/home` with nothing to do.
+- Signup now routes to `/import` for Goodreads onboarding, but there is still no broader empty-state onboarding beyond that import path.
 - Modals don't close on Escape.
 - Comments are flat (covered above by C).
 - Notifications page has no "mark all read" and no filter tabs.

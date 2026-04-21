@@ -216,6 +216,16 @@ export default function SettingsPage() {
         />
       </div>
 
+      <div className="card" style={{ padding: 24, marginBottom: 14 }}>
+        <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Import library</h3>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
+          Bring in your Goodreads CSV after signup or anytime later. We map shelf states, ratings, review text, and custom shelves into Bookcase.
+        </p>
+        <Link href="/import" className="btn btn-pulp btn-sm">
+          Import Goodreads
+        </Link>
+      </div>
+
       <div className="card" style={{ padding: 24 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Account</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Email, session, sign out.</p>
