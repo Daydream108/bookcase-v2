@@ -7,6 +7,7 @@ import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { Spoiler } from '@/components/redesign/primitives'
 import { LikeButton } from '@/components/redesign/LikeButton'
+import { PostUpvoteButton } from '@/components/redesign/PostUpvoteButton'
 import { createClient } from '@/lib/supabase/client'
 import { shareUrl } from '@/lib/share'
 import {
@@ -22,6 +23,7 @@ import {
   listBookPosts,
   listBookTags,
   listLikedReviewIds,
+  listUpvotedPostIds,
   listPostComments,
   listReviewsForBook,
   listSavedReviewIds,
@@ -56,6 +58,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [tags, setTags] = useState<DbTag[]>([])
   const [savedReviewIds, setSavedReviewIds] = useState<string[]>([])
   const [likedReviewIds, setLikedReviewIds] = useState<string[]>([])
+  const [upvotedPostIds, setUpvotedPostIds] = useState<string[]>([])
   const [commentsByPost, setCommentsByPost] = useState<CommentMap>({})
   const [commentDrafts, setCommentDrafts] = useState<DraftMap>({})
   const [openComments, setOpenComments] = useState<ToggleMap>({})
@@ -103,19 +106,22 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       setTags(tagRows)
 
       if (profile) {
-        const [userBookRow, savedIds, likedIds] = await Promise.all([
+        const [userBookRow, savedIds, likedIds, upvotedIds] = await Promise.all([
           getUserBook(supabase, profile.id, id),
           listSavedReviewIds(supabase, reviewRows.map((review) => review.id)),
           listLikedReviewIds(supabase, reviewRows.map((review) => review.id)),
+          listUpvotedPostIds(supabase, threadRows.map((thread) => thread.id)),
         ])
         if (cancelled) return
         setUserBook(userBookRow)
         setSavedReviewIds(savedIds)
         setLikedReviewIds(likedIds)
+        setUpvotedPostIds(upvotedIds)
       } else {
         setUserBook(null)
         setSavedReviewIds([])
         setLikedReviewIds([])
+        setUpvotedPostIds([])
       }
 
       if (!cancelled) setLoading(false)
@@ -137,7 +143,12 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   }
 
   const refreshThreads = async () => {
-    setThreads(await listBookPosts(supabase, id))
+    const rows = await listBookPosts(supabase, id)
+    setThreads(rows)
+    if (me) {
+      const ids = await listUpvotedPostIds(supabase, rows.map((thread) => thread.id))
+      setUpvotedPostIds(ids)
+    }
   }
 
   const refreshReviews = async () => {
@@ -554,26 +565,26 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 const commentsOpen = openComments[thread.id]
 
                 return (
-                  <div key={thread.id} className="card" style={{ padding: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-                      <div style={{ width: 48, textAlign: 'center' }}>
-                        <div className="serif" style={{ fontSize: 24, color: 'var(--pulp)', lineHeight: 1 }}>↑</div>
-                        <div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{thread.upvotes}</div>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{thread.title}</div>
-                        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-                          by @{user.handle} · {new Date(thread.created_at).toLocaleDateString()}
-                        </div>
-                        {thread.body && (
-                          <div style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 6, maxWidth: 720 }}>
-                            {thread.body}
-                          </div>
-                        )}
+                  <div key={thread.id} id={`thread-${thread.id}`} className="card" style={{ padding: 18 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                      <Avatar user={user} size={28} />
+                      <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                        <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b> · {new Date(thread.created_at).toLocaleDateString()}
                       </div>
                     </div>
+                    <div className="serif" style={{ fontSize: 20, lineHeight: 1.2, marginBottom: 6 }}>{thread.title}</div>
+                    {thread.body && (
+                      <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                        {thread.body}
+                      </div>
+                    )}
 
-                    <div style={{ display: 'flex', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                      <PostUpvoteButton
+                        postId={thread.id}
+                        initialCount={thread.upvotes}
+                        initialUpvoted={upvotedPostIds.includes(thread.id)}
+                      />
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={async () => {
@@ -583,7 +594,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                           setOpenComments((current) => ({ ...current, [thread.id]: !commentsOpen }))
                         }}
                       >
-                        <Icon name="message" size={13} /> Comments {thread.comment_count ?? comments.length}
+                        <Icon name="message" size={13} /> {thread.comment_count ?? comments.length} {(thread.comment_count ?? comments.length) === 1 ? 'reply' : 'replies'}
                       </button>
                       <button
                         className="btn btn-ghost btn-sm"

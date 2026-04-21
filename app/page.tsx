@@ -26,7 +26,7 @@ export default function LandingPage() {
 
   const features = [
     { title: 'Rant. React. Reveal.', body: 'Tap to reveal spoilers. React with stickers. Argue about the ending in a thread pinned to the exact page.', emoji: '💬', accent: 'var(--pulp)' },
-    { title: 'Every book has a forum.', body: "Book threads feel like subreddits — but cleaner, without the brigading, just people who've read the damn book.", emoji: '📚', accent: 'var(--moss)' },
+    { title: 'Every book has a room.', body: "Each title gets its own discussion — cleaner than any forum, no brigading, just people who've actually read the damn book.", emoji: '📚', accent: 'var(--moss)' },
     { title: 'Reading, but a habit.', body: "Streaks compound. Heatmap fills up. Badges drop. Your shelf becomes a receipt of who you're becoming.", emoji: '🔥', accent: 'var(--pulp)' },
     { title: 'Follow authors like artists.', body: 'New book announcements, AMAs, and shelf drops — right in your feed, no email newsletter in sight.', emoji: '✍️', accent: 'var(--plum)' },
     { title: 'Clubs that actually read.', body: 'Small, focused reading groups with shared progress bars. Nobody gets left behind. Nobody gets spoiled.', emoji: '🫂', accent: 'var(--sky)' },
@@ -83,7 +83,7 @@ export default function LandingPage() {
               <span style={{ fontStyle: 'italic', color: 'var(--pulp)' }}>but it talks back.</span>
             </h1>
             <p style={{ fontSize: 19, lineHeight: 1.5, color: 'var(--ink-2)', maxWidth: 540, marginBottom: 36 }}>
-              Track what you read. Rant about plot twists. Follow authors, join book clubs, run a reading streak. Bookcase is Letterboxd-energy meets Reddit-depth — for people who actually finish the book.
+              Track what you read. Rant about plot twists. Follow authors, join book clubs, run a reading streak. Bookcase is a shelf that talks back — for people who actually finish the book.
             </p>
             <div style={{ display: 'flex', gap: 12, marginBottom: 40 }}>
               <Link href="/signup" className="btn btn-pulp btn-lg">

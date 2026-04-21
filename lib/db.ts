@@ -1425,6 +1425,20 @@ export async function listLikedReviewIds(
   return (data ?? []).map((row: any) => row.review_id).filter(Boolean)
 }
 
+export async function listUpvotedPostIds(
+  supabase: Client,
+  postIds: string[]
+): Promise<string[]> {
+  const user = await getCurrentUser(supabase)
+  if (!user || !postIds.length) return []
+  const { data } = await supabase
+    .from('book_post_upvotes')
+    .select('post_id')
+    .eq('user_id', user.id)
+    .in('post_id', postIds)
+  return (data ?? []).map((row: any) => row.post_id).filter(Boolean)
+}
+
 export async function toggleLike(supabase: Client, reviewId: string): Promise<boolean> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')

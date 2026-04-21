@@ -175,7 +175,8 @@ export default function HomePage() {
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: 'var(--ink-3)' }}>
-                      <span>↑ {p.upvotes}</span>
+                      <span>△ {p.upvotes}</span>
+                      <span>💬 {(p as any).comment_count ?? 0}</span>
                     </div>
                   </div>
                 </Link>
