@@ -4,6 +4,7 @@ import { use, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
+import { ReportButton } from '@/components/redesign/ReportButton'
 import { createClient } from '@/lib/supabase/client'
 import {
   getClub,
@@ -97,23 +98,33 @@ export default function ClubDetailPage({ params }: { params: Promise<{ id: strin
           </div>
 
           {me && (
-            <button
-              className={club.is_member ? 'btn btn-ghost' : 'btn btn-pulp'}
-              onClick={async () => {
-                try {
-                  if (club.is_member) {
-                    await leaveClub(supabase, club.id)
-                  } else {
-                    await joinClub(supabase, club.id)
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {me.id !== club.owner_id && (
+                <ReportButton
+                  entityType="club"
+                  entityId={club.id}
+                  targetUserId={club.owner_id}
+                  compact
+                />
+              )}
+              <button
+                className={club.is_member ? 'btn btn-ghost' : 'btn btn-pulp'}
+                onClick={async () => {
+                  try {
+                    if (club.is_member) {
+                      await leaveClub(supabase, club.id)
+                    } else {
+                      await joinClub(supabase, club.id)
+                    }
+                    await load()
+                  } catch (error) {
+                    setMessage((error as Error).message || 'Could not update membership')
                   }
-                  await load()
-                } catch (error) {
-                  setMessage((error as Error).message || 'Could not update membership')
-                }
-              }}
-            >
-              {club.is_member ? 'Leave club' : 'Join club'}
-            </button>
+                }}
+              >
+                {club.is_member ? 'Leave club' : 'Join club'}
+              </button>
+            </div>
           )}
         </div>
 

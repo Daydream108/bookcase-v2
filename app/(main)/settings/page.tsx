@@ -3,22 +3,40 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { getCurrentProfile, updateProfile, type DbProfile } from '@/lib/db'
+import {
+  getCurrentProfile,
+  getNotificationPreferences,
+  updateProfile,
+  upsertNotificationPreferences,
+  type DbNotificationPreferences,
+  type DbProfile,
+} from '@/lib/db'
 
-type PrefsState = {
+type LocalPrefsState = {
   spoilersBlurred: boolean
-  publicShelf: boolean
-  notifyFollows: boolean
-  notifyComments: boolean
-  notifyUpvotes: boolean
 }
 
-const DEFAULT_PREFS: PrefsState = {
+type NotificationPrefsState = Pick<
+  DbNotificationPreferences,
+  | 'notify_follows'
+  | 'notify_comments'
+  | 'notify_upvotes'
+  | 'notify_likes'
+  | 'notify_club_activity'
+  | 'notify_roadmap_updates'
+>
+
+const DEFAULT_LOCAL_PREFS: LocalPrefsState = {
   spoilersBlurred: true,
-  publicShelf: true,
-  notifyFollows: true,
-  notifyComments: true,
-  notifyUpvotes: true,
+}
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPrefsState = {
+  notify_follows: true,
+  notify_comments: true,
+  notify_upvotes: true,
+  notify_likes: true,
+  notify_club_activity: true,
+  notify_roadmap_updates: true,
 }
 
 const PREFS_KEY = 'bookcase:prefs'
@@ -32,9 +50,13 @@ export default function SettingsPage() {
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
   const [location, setLocation] = useState('')
-  const [prefs, setPrefs] = useState<PrefsState>(DEFAULT_PREFS)
+  const [localPrefs, setLocalPrefs] = useState<LocalPrefsState>(DEFAULT_LOCAL_PREFS)
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefsState>(
+    DEFAULT_NOTIFICATION_PREFS
+  )
 
   const [saving, setSaving] = useState(false)
+  const [prefsSavingKey, setPrefsSavingKey] = useState<string | null>(null)
   const [toast, setToast] = useState('')
 
   useEffect(() => {
@@ -48,14 +70,28 @@ export default function SettingsPage() {
         setUsername(profile.username ?? '')
         setBio(profile.bio ?? '')
         setLocation(profile.location ?? '')
+        const prefs = await getNotificationPreferences(supabase)
+        if (!cancelled && prefs) {
+          setNotificationPrefs({
+            notify_follows: prefs.notify_follows,
+            notify_comments: prefs.notify_comments,
+            notify_upvotes: prefs.notify_upvotes,
+            notify_likes: prefs.notify_likes,
+            notify_club_activity: prefs.notify_club_activity,
+            notify_roadmap_updates: prefs.notify_roadmap_updates,
+          })
+        }
       }
       try {
         const raw = typeof window !== 'undefined' ? localStorage.getItem(PREFS_KEY) : null
-        if (raw) setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) })
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<LocalPrefsState>
+          if (!cancelled) setLocalPrefs({ ...DEFAULT_LOCAL_PREFS, ...parsed })
+        }
       } catch {
         /* ignore */
       }
-      setLoading(false)
+      if (!cancelled) setLoading(false)
     })()
     return () => {
       cancelled = true
@@ -86,13 +122,32 @@ export default function SettingsPage() {
     }
   }
 
-  const updatePrefs = (patch: Partial<PrefsState>) => {
-    const next = { ...prefs, ...patch }
-    setPrefs(next)
+  const updateLocalPrefs = (patch: Partial<LocalPrefsState>) => {
+    const next = { ...localPrefs, ...patch }
+    setLocalPrefs(next)
     try {
       if (typeof window !== 'undefined') localStorage.setItem(PREFS_KEY, JSON.stringify(next))
     } catch {
       /* ignore */
+    }
+    flash('Device preference saved')
+  }
+
+  const updateNotificationPref = async (
+    key: keyof NotificationPrefsState,
+    value: boolean
+  ) => {
+    const next = { ...notificationPrefs, [key]: value }
+    setNotificationPrefs(next)
+    setPrefsSavingKey(key)
+    try {
+      await upsertNotificationPreferences(supabase, { [key]: value })
+      flash('Notification preferences saved')
+    } catch (err) {
+      setNotificationPrefs(notificationPrefs)
+      flash((err as Error).message || 'Could not save notification preferences')
+    } finally {
+      setPrefsSavingKey(null)
     }
   }
 
@@ -107,7 +162,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '60px 40px', textAlign: 'center', color: 'var(--ink-3)' }}>
-        Loading…
+        Loading...
       </div>
     )
   }
@@ -164,13 +219,13 @@ export default function SettingsPage() {
             <textarea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              placeholder="book twin with nobody yet…"
+              placeholder="book twin with nobody yet..."
               rows={3}
               style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, resize: 'none', fontFamily: 'inherit', fontSize: 14 }}
             />
           </label>
           <button type="submit" disabled={saving} className="btn btn-pulp btn-sm" style={{ justifySelf: 'start' }}>
-            {saving ? 'Saving…' : 'Save changes'}
+            {saving ? 'Saving...' : 'Save changes'}
           </button>
           {toast && <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--ink-3)' }}>{toast}</span>}
         </div>
@@ -178,41 +233,57 @@ export default function SettingsPage() {
 
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Privacy &amp; spoilers</h3>
-        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Who sees your shelf, and how much.</p>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Controls that only affect this device right now.</p>
         <Toggle
           label="Blur spoiler content until tapped"
-          checked={prefs.spoilersBlurred}
-          onChange={(v) => updatePrefs({ spoilersBlurred: v })}
-        />
-        <Toggle
-          label="Show my shelf on my public profile"
-          checked={prefs.publicShelf}
-          onChange={(v) => updatePrefs({ publicShelf: v })}
+          checked={localPrefs.spoilersBlurred}
+          onChange={(v) => updateLocalPrefs({ spoilersBlurred: v })}
         />
         <p style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 10 }}>
-          Preferences save locally. Server-side enforcement lands when club privacy ships.
+          Spoiler blur is still local-only. Notification settings below are now live server-side.
         </p>
       </div>
 
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Notifications</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
-          Threads, replies, author drops, badge unlocks.
+          These are saved to your account and now gate notification writes.
         </p>
         <Toggle
           label="New followers"
-          checked={prefs.notifyFollows}
-          onChange={(v) => updatePrefs({ notifyFollows: v })}
+          checked={notificationPrefs.notify_follows}
+          onChange={(v) => void updateNotificationPref('notify_follows', v)}
+          saving={prefsSavingKey === 'notify_follows'}
         />
         <Toggle
-          label="Replies on my threads"
-          checked={prefs.notifyComments}
-          onChange={(v) => updatePrefs({ notifyComments: v })}
+          label="Replies and comments"
+          checked={notificationPrefs.notify_comments}
+          onChange={(v) => void updateNotificationPref('notify_comments', v)}
+          saving={prefsSavingKey === 'notify_comments'}
         />
         <Toggle
-          label="Upvotes on my posts"
-          checked={prefs.notifyUpvotes}
-          onChange={(v) => updatePrefs({ notifyUpvotes: v })}
+          label="Thread upvotes"
+          checked={notificationPrefs.notify_upvotes}
+          onChange={(v) => void updateNotificationPref('notify_upvotes', v)}
+          saving={prefsSavingKey === 'notify_upvotes'}
+        />
+        <Toggle
+          label="Review likes"
+          checked={notificationPrefs.notify_likes}
+          onChange={(v) => void updateNotificationPref('notify_likes', v)}
+          saving={prefsSavingKey === 'notify_likes'}
+        />
+        <Toggle
+          label="Club joins and invites"
+          checked={notificationPrefs.notify_club_activity}
+          onChange={(v) => void updateNotificationPref('notify_club_activity', v)}
+          saving={prefsSavingKey === 'notify_club_activity'}
+        />
+        <Toggle
+          label="Roadmap updates"
+          checked={notificationPrefs.notify_roadmap_updates}
+          onChange={(v) => void updateNotificationPref('notify_roadmap_updates', v)}
+          saving={prefsSavingKey === 'notify_roadmap_updates'}
         />
       </div>
 
@@ -237,11 +308,24 @@ export default function SettingsPage() {
   )
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  label,
+  checked,
+  onChange,
+  saving = false,
+}: {
+  label: string
+  checked: boolean
+  onChange: (v: boolean) => void
+  saving?: boolean
+}) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12, cursor: 'pointer' }}>
       <span style={{ fontSize: 14 }}>{label}</span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ transform: 'scale(1.2)', accentColor: 'var(--pulp)' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {saving && <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>Saving...</span>}
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ transform: 'scale(1.2)', accentColor: 'var(--pulp)' }} />
+      </div>
     </label>
   )
 }

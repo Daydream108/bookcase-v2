@@ -284,9 +284,39 @@ export default function GoodreadsImportPage() {
                 <Link href="/home" className="btn btn-pulp btn-sm">
                   Go to home
                 </Link>
+                <Link href="/streak" className="btn btn-outline btn-sm">
+                  Log first session
+                </Link>
                 <Link href="/settings" className="btn btn-outline btn-sm">
                   Account settings
                 </Link>
+              </div>
+              <div
+                className="card"
+                style={{
+                  marginTop: 16,
+                  padding: 14,
+                  background: 'color-mix(in oklab, var(--paper) 88%, white)',
+                }}
+              >
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    color: 'var(--ink-3)',
+                    marginBottom: 8,
+                  }}
+                >
+                  Next up
+                </div>
+                <div style={{ display: 'grid', gap: 8, fontSize: 13, color: 'var(--ink-2)' }}>
+                  <div>1. Open Home to see the onboarding checklist and your first recommendations.</div>
+                  <div>2. Pin favorites on your profile so the bookcase looks alive right away.</div>
+                  <div>3. Log a reading session to start a trustworthy streak and tracker history.</div>
+                  <div>4. Follow readers or join a club so the feed fills with real activity.</div>
+                </div>
               </div>
             </div>
           )}

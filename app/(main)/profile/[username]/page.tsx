@@ -14,6 +14,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import {
   getCurrentUser,
+  getUserBlockState,
   getProfileByUsername,
   getProfileStats,
   getStreak,
@@ -25,12 +26,14 @@ import {
   removeUserBook,
   reorderFavorites,
   searchBooks,
+  toggleBlockUser,
   toggleFollow,
   toUiBook,
   toUiUser,
   unpinFavorite,
   upsertUserBook,
   type DbBadge,
+  type DbBlockState,
   type DbBookWithAuthors,
   type DbFavoriteBook,
   type DbProfile,
@@ -66,6 +69,11 @@ export default function ProfilePage({
   const [pickerResults, setPickerResults] = useState<DbBookWithAuthors[]>([])
   const [pickerLoading, setPickerLoading] = useState(false)
   const [pickerError, setPickerError] = useState('')
+  const [blockState, setBlockState] = useState<DbBlockState>({
+    blockedByMe: false,
+    blockedMe: false,
+  })
+  const [actionMessage, setActionMessage] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -83,9 +91,38 @@ export default function ProfilePage({
       if (cancelled) return
 
       setProfile(nextProfile)
+      setNotFound(false)
       const me = await getCurrentUser(supabase)
       if (cancelled) return
       setMeId(me?.id ?? null)
+
+      let shouldHideProfileData = false
+      if (me && me.id !== nextProfile.id) {
+        const nextBlockState = await getUserBlockState(supabase, nextProfile.id)
+        if (!cancelled) setBlockState(nextBlockState)
+        shouldHideProfileData = nextBlockState.blockedByMe || nextBlockState.blockedMe
+      } else if (!cancelled) {
+        setBlockState({ blockedByMe: false, blockedMe: false })
+      }
+
+      if (shouldHideProfileData) {
+        if (!cancelled) {
+          setStats({
+            user_id: nextProfile.id,
+            follower_count: 0,
+            following_count: 0,
+            books_read: 0,
+          })
+          setShelf([])
+          setCurrentReading([])
+          setSessions([])
+          setStreak({ current: 0, longest: 0 })
+          setFavorites([])
+          setBadges([])
+          setLoading(false)
+        }
+        return
+      }
 
       const [nextStats, allShelf, readingShelf, sessionRows, streakRow, favoriteRows, badgeRows] =
         await Promise.all([
@@ -124,7 +161,7 @@ export default function ProfilePage({
     const dayMs = 86_400_000
 
     for (const session of sessions) {
-      const date = new Date(session.session_date).getTime()
+      const date = dateOnlyToUtcMs(session.session_date)
       const diffDays = Math.floor((today.getTime() - date) / dayMs)
       if (diffDays >= 0 && diffDays < days.length) {
         days[days.length - 1 - diffDays] +=
@@ -162,6 +199,7 @@ export default function ProfilePage({
 
   const uiUser = toUiUser(profile)
   const isMe = meId === profile.id
+  const isBlocked = blockState.blockedByMe || blockState.blockedMe
   const joined = new Date(profile.created_at).toLocaleDateString(undefined, {
     month: 'long',
     year: 'numeric',
@@ -289,36 +327,64 @@ export default function ProfilePage({
             alignItems: 'flex-start',
           }}
         >
-          <Avatar user={uiUser} size={120} />
+          {blockState.blockedMe ? (
+            <div
+              style={{
+                width: 120,
+                height: 120,
+                borderRadius: '50%',
+                border: '1px solid var(--border)',
+                background: 'var(--paper-2)',
+                display: 'grid',
+                placeItems: 'center',
+                fontSize: 12,
+                color: 'var(--ink-3)',
+              }}
+            >
+              Hidden
+            </div>
+          ) : (
+            <Avatar user={uiUser} size={120} />
+          )}
 
           <div style={{ flex: '1 1 360px', minWidth: 260 }}>
             <div className="eyebrow" style={{ marginBottom: 8 }}>
-              Reader - joined {joined}
+              {isBlocked ? 'Reader profile' : `Reader - joined ${joined}`}
             </div>
             <h1 className="display-lg" style={{ marginBottom: 6 }}>
-              {uiUser.name}
+              {blockState.blockedMe ? 'Profile unavailable' : uiUser.name}
             </h1>
-            <div style={{ fontSize: 15, color: 'var(--ink-3)', marginBottom: 14 }}>
-              @{uiUser.handle}
-              {profile.location ? ` - ${profile.location}` : ''}
-            </div>
-            {profile.bio && (
-              <p
-                style={{
-                  fontSize: 16,
-                  lineHeight: 1.5,
-                  maxWidth: 560,
-                  marginBottom: 20,
-                }}
-              >
-                {profile.bio}
-              </p>
+            {!isBlocked ? (
+              <>
+                <div style={{ fontSize: 15, color: 'var(--ink-3)', marginBottom: 14 }}>
+                  @{uiUser.handle}
+                  {profile.location ? ` - ${profile.location}` : ''}
+                </div>
+                {profile.bio && (
+                  <p
+                    style={{
+                      fontSize: 16,
+                      lineHeight: 1.5,
+                      maxWidth: 560,
+                      marginBottom: 20,
+                    }}
+                  >
+                    {profile.bio}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  <Stat label="books read" value={stats?.books_read ?? 0} />
+                  <Stat label="followers" value={stats?.follower_count ?? 0} />
+                  <Stat label="following" value={stats?.following_count ?? 0} />
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 14, color: 'var(--ink-3)', maxWidth: 520 }}>
+                {blockState.blockedMe
+                  ? 'This reader has blocked you, so their profile, shelves, and reading activity are hidden.'
+                  : 'You blocked this reader. Unblock them any time to see their shelves and reading activity again.'}
+              </div>
             )}
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <Stat label="books read" value={stats?.books_read ?? 0} />
-              <Stat label="followers" value={stats?.follower_count ?? 0} />
-              <Stat label="following" value={stats?.following_count ?? 0} />
-            </div>
           </div>
 
           <div
@@ -335,33 +401,77 @@ export default function ProfilePage({
               </Link>
             ) : (
               meId && (
-                <button
-                  className="btn btn-pulp"
-                  onClick={async () => {
-                    await toggleFollow(supabase, profile.id)
-                    const nextStats = await getProfileStats(supabase, profile.id)
-                    setStats(nextStats)
-                  }}
-                >
-                  Follow
-                </button>
+                <>
+                  {!blockState.blockedByMe && !blockState.blockedMe && (
+                    <button
+                      className="btn btn-pulp"
+                      onClick={async () => {
+                        try {
+                          await toggleFollow(supabase, profile.id)
+                          const nextStats = await getProfileStats(supabase, profile.id)
+                          setStats(nextStats)
+                          setActionMessage('Follow updated')
+                        } catch (error) {
+                          setActionMessage(error instanceof Error ? error.message : 'Could not update follow')
+                        }
+                      }}
+                    >
+                      Follow
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-outline"
+                    onClick={async () => {
+                      try {
+                        const nextBlocked = await toggleBlockUser(supabase, profile.id)
+                        setBlockState((current) => ({
+                          ...current,
+                          blockedByMe: nextBlocked,
+                        }))
+                        setActionMessage(nextBlocked ? 'Reader blocked' : 'Reader unblocked')
+                      } catch (error) {
+                        setActionMessage(error instanceof Error ? error.message : 'Could not update block')
+                      }
+                    }}
+                  >
+                    {blockState.blockedByMe ? 'Unblock' : 'Block'}
+                  </button>
+                  {actionMessage && (
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'right' }}>
+                      {actionMessage}
+                    </div>
+                  )}
+                </>
               )
             )}
           </div>
         </div>
       </div>
 
-      <Bookcase
-        ownerName={uiUser.name}
-        favorites={favoriteSpines}
-        sources={bookcaseSources}
-        editable={isMe}
-        storageKey={`bookcase-layout:${profile.id}`}
-        onAddToShelf={isMe ? openPicker : undefined}
-        onRemoveFromShelf={isMe ? removeFromShelf : undefined}
-      />
+      {isBlocked ? (
+        <div className="card" style={{ padding: 24, marginBottom: 24, textAlign: 'center' }}>
+          <div className="eyebrow" style={{ marginBottom: 8 }}>
+            {blockState.blockedMe ? 'Profile unavailable' : 'Reader blocked'}
+          </div>
+          <div style={{ fontSize: 14, color: 'var(--ink-3)' }}>
+            {blockState.blockedMe
+              ? 'This reader has blocked you, so their shelves and reading activity are hidden.'
+              : 'You blocked this reader, so their shelves and reading activity stay hidden until you unblock them.'}
+          </div>
+        </div>
+      ) : (
+        <Bookcase
+          ownerName={uiUser.name}
+          favorites={favoriteSpines}
+          sources={bookcaseSources}
+          editable={isMe}
+          storageKey={`bookcase-layout:${profile.id}`}
+          onAddToShelf={isMe ? openPicker : undefined}
+          onRemoveFromShelf={isMe ? removeFromShelf : undefined}
+        />
+      )}
 
-      {picker && (
+      {picker && !isBlocked && (
         <BookcasePickerModal
           target={picker}
           query={pickerQuery}
@@ -381,7 +491,7 @@ export default function ProfilePage({
         />
       )}
 
-      {isMe && (
+      {isMe && !isBlocked && (
         <div className="card" style={{ padding: 24, marginBottom: 24 }}>
           <div
             style={{
@@ -507,7 +617,7 @@ export default function ProfilePage({
         </div>
       )}
 
-      {badges.length > 0 && (
+      {!isBlocked && badges.length > 0 && (
         <div className="card" style={{ padding: 24, marginBottom: 24 }}>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
             Badges
@@ -548,14 +658,15 @@ export default function ProfilePage({
         </div>
       )}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: 16,
-          marginBottom: 32,
-        }}
-      >
+      {!isBlocked && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 16,
+            marginBottom: 32,
+          }}
+        >
         <div
           className="card"
           style={{
@@ -611,9 +722,10 @@ export default function ProfilePage({
             last 180 days
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
-      {currentReading.length > 0 && (
+      {!isBlocked && currentReading.length > 0 && (
         <>
           <div className="eyebrow" style={{ marginBottom: 12 }}>
             Currently reading
@@ -652,7 +764,7 @@ export default function ProfilePage({
                     </div>
                     {row.started_at && (
                       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                        started {new Date(row.started_at).toLocaleDateString()}
+                        started {formatDateOnly(row.started_at)}
                       </div>
                     )}
                   </div>
@@ -663,7 +775,8 @@ export default function ProfilePage({
         </>
       )}
 
-      <div className="card" style={{ padding: 24 }}>
+      {!isBlocked && (
+        <div className="card" style={{ padding: 24 }}>
         <div className="eyebrow" style={{ marginBottom: 14 }}>
           Reading life - last 90 days
         </div>
@@ -727,7 +840,8 @@ export default function ProfilePage({
             <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>more</span>
           </div>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -860,4 +974,14 @@ function Stat({ label, value }: { label: string; value: number }) {
       </span>
     </div>
   )
+}
+
+function dateOnlyToUtcMs(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return Date.UTC(year, month - 1, day)
+}
+
+function formatDateOnly(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString()
 }

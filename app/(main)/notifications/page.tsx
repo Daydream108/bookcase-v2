@@ -16,7 +16,7 @@ import {
 
 const typeLabel: Record<string, string> = {
   follow: 'started following you',
-  like: 'liked your post',
+  like: 'liked your review',
   comment: 'commented on your post',
   review_on_book: 'reviewed a book',
   list_mention: 'mentioned you in a list',

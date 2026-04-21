@@ -935,6 +935,8 @@ alter table blocked_users      enable row level security;
 alter table blocked_authors    enable row level security;
 alter table blocked_tags       enable row level security;
 alter table review_saves       enable row level security;
+alter table notification_preferences enable row level security;
+alter table content_reports    enable row level security;
 
 -- clubs
 drop policy if exists "Public clubs are viewable by everyone" on clubs;
@@ -1028,7 +1030,7 @@ create policy "Users can delete own favorites"          on favorite_books for de
 drop policy if exists "Users can view own blocked users" on blocked_users;
 drop policy if exists "Users can insert own blocked users" on blocked_users;
 drop policy if exists "Users can delete own blocked users" on blocked_users;
-create policy "Users can view own blocked users" on blocked_users for select using (auth.uid() = user_id);
+create policy "Users can view own blocked users" on blocked_users for select using (auth.uid() = user_id or auth.uid() = blocked_user_id);
 create policy "Users can insert own blocked users" on blocked_users for insert with check (auth.uid() = user_id);
 create policy "Users can delete own blocked users" on blocked_users for delete using (auth.uid() = user_id);
 
@@ -1397,6 +1399,41 @@ create table if not exists notifications (
 create index if not exists notifications_user_idx   on notifications (user_id, created_at desc);
 create index if not exists notifications_unread_idx on notifications (user_id, is_read) where is_read = false;
 
+create table if not exists notification_preferences (
+  user_id uuid primary key references profiles(id) on delete cascade,
+  notify_follows boolean not null default true,
+  notify_comments boolean not null default true,
+  notify_upvotes boolean not null default true,
+  notify_likes boolean not null default true,
+  notify_club_activity boolean not null default true,
+  notify_roadmap_updates boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists content_reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references profiles(id) on delete cascade,
+  target_user_id uuid references profiles(id) on delete set null,
+  entity_type text not null check (entity_type in ('review', 'book_post', 'book_post_comment', 'club')),
+  entity_id uuid not null,
+  reason_category text not null check (reason_category in (
+    'spam',
+    'harassment',
+    'hate',
+    'spoilers',
+    'self_harm',
+    'sexual_content',
+    'other'
+  )),
+  details text,
+  status text not null default 'open' check (status in ('open', 'reviewing', 'resolved', 'dismissed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists content_reports_reporter_idx on content_reports (reporter_id, created_at desc);
+create index if not exists content_reports_entity_idx on content_reports (entity_type, entity_id);
+create index if not exists content_reports_status_idx on content_reports (status, created_at desc);
+
 alter table notifications enable row level security;
 
 drop policy if exists "Users can view own notifications" on notifications;
@@ -1407,6 +1444,18 @@ create policy "Users can view own notifications"   on notifications for select u
 create policy "System can insert notifications"    on notifications for insert with check (auth.uid() = actor_id);
 create policy "Users can update own notifications" on notifications for update using (auth.uid() = user_id);
 create policy "Users can delete own notifications" on notifications for delete using (auth.uid() = user_id);
+
+drop policy if exists "Users can view own notification preferences" on notification_preferences;
+drop policy if exists "Users can upsert own notification preferences" on notification_preferences;
+create policy "Users can view own notification preferences" on notification_preferences for select using (auth.uid() = user_id);
+create policy "Users can upsert own notification preferences" on notification_preferences for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can view own reports" on content_reports;
+drop policy if exists "Users can create own reports" on content_reports;
+create policy "Users can view own reports" on content_reports for select using (auth.uid() = reporter_id);
+create policy "Users can create own reports" on content_reports for insert with check (auth.uid() = reporter_id);
 
 -- ============================================================
 -- Done. Sign up at your app URL to create your first account.

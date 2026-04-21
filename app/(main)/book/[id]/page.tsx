@@ -1,14 +1,15 @@
 'use client'
 
-import { use, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { use, useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
-import { Spoiler } from '@/components/redesign/primitives'
 import { LikeButton } from '@/components/redesign/LikeButton'
 import { PostVoteButtons } from '@/components/redesign/PostUpvoteButton'
+import { ReportButton } from '@/components/redesign/ReportButton'
 import { HalfStarInput, StarDisplay } from '@/components/redesign/Stars'
+import { Spoiler } from '@/components/redesign/primitives'
 import { createClient } from '@/lib/supabase/client'
 import { shareUrl } from '@/lib/share'
 import {
@@ -24,8 +25,8 @@ import {
   listBookPosts,
   listBookTags,
   listLikedReviewIds,
-  listPostVotes,
   listPostComments,
+  listPostVotes,
   listReviewsForBook,
   listSavedReviewIds,
   logReadingSession,
@@ -47,6 +48,11 @@ import {
 type CommentMap = Record<string, DbBookPostComment[]>
 type DraftMap = Record<string, string>
 type ToggleMap = Record<string, boolean>
+
+type CommentTreeNode = {
+  comment: DbBookPostComment
+  children: CommentTreeNode[]
+}
 
 const MAX_REPLY_DEPTH = 2
 
@@ -83,7 +89,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [showLog, setShowLog] = useState(false)
   const [logPages, setLogPages] = useState('')
   const [logMinutes, setLogMinutes] = useState('')
-  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10))
+  const [logDate, setLogDate] = useState(todayInputValue())
   const [logNotes, setLogNotes] = useState('')
 
   const [tagInput, setTagInput] = useState('')
@@ -140,7 +146,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
   const flash = (message: string) => {
     setToast(message)
-    setTimeout(() => setToast(''), 2400)
+    window.setTimeout(() => setToast(''), 2400)
   }
 
   const loadComments = async (postId: string) => {
@@ -176,8 +182,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     const row = await upsertUserBook(supabase, {
       bookId: id,
       status,
-      started_at: status === 'reading' ? new Date().toISOString().slice(0, 10) : undefined,
-      finished_at: status === 'read' ? new Date().toISOString().slice(0, 10) : undefined,
+      started_at: status === 'reading' ? todayInputValue() : undefined,
+      finished_at: status === 'read' ? todayInputValue() : undefined,
     })
     setUserBook(row)
     const awarded = await awardProgressBadges(supabase)
@@ -200,10 +206,12 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     flash(`Rated ${rating} stars`)
   }
 
-  const submitReview = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submitReview = async (event: React.FormEvent) => {
+    event.preventDefault()
     if (!me) return flash('Sign in to post a review')
-    if (!reviewBody.trim() || reviewRating === 0) return flash('Add a rating and some text')
+    if (!reviewBody.trim() || reviewRating === 0) {
+      return flash('Add a rating and some text')
+    }
 
     await createReview(supabase, {
       bookId: id,
@@ -221,8 +229,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     flash(formatToast('Review posted', awarded))
   }
 
-  const submitThread = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submitThread = async (event: React.FormEvent) => {
+    event.preventDefault()
     if (!me) return flash('Sign in to start a thread')
     if (!threadTitle.trim()) return flash('Give your thread a title')
 
@@ -239,8 +247,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     flash('Thread posted')
   }
 
-  const submitLog = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submitLog = async (event: React.FormEvent) => {
+    event.preventDefault()
     if (!me) return flash('Sign in to log a session')
 
     await logReadingSession(supabase, {
@@ -281,11 +289,26 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-      <div style={{ position: 'relative', padding: '40px 40px 60px', background: 'linear-gradient(180deg, var(--paper-2), var(--paper))', borderBottom: '1px solid var(--border)' }}>
+      <div
+        style={{
+          position: 'relative',
+          padding: '40px 40px 60px',
+          background: 'linear-gradient(180deg, var(--paper-2), var(--paper))',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
         <Link href="/home" className="btn btn-ghost btn-sm" style={{ marginBottom: 20, display: 'inline-flex' }}>
           Back
         </Link>
-        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr auto', gap: 40, alignItems: 'start' }}>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '280px 1fr auto',
+            gap: 40,
+            alignItems: 'start',
+          }}
+        >
           <div>
             <Cover book={ui} size={280} style={{ borderRadius: 8 }} />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
@@ -311,12 +334,18 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               className="btn btn-ghost btn-sm"
               style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
               onClick={async () => {
-                const r = await shareUrl({
+                const result = await shareUrl({
                   title: book.title,
-                  text: `${book.title}${authorLine ? ' — ' + authorLine : ''}`,
+                  text: `${book.title}${authorLine ? ` - ${authorLine}` : ''}`,
                   path: `/book/${id}`,
                 })
-                flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+                flash(
+                  result === 'copied'
+                    ? 'Link copied'
+                    : result === 'shared'
+                    ? 'Shared'
+                    : 'Could not share'
+                )
               }}
             >
               <Icon name="share" size={13} /> Share this book
@@ -325,22 +354,37 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
           <div>
             <div className="eyebrow" style={{ marginBottom: 10 }}>
-              {ui.genre || 'Book'} {ui.year ? `· ${ui.year}` : ''}
+              {ui.genre || 'Book'}
+              {ui.year ? ` - ${ui.year}` : ''}
             </div>
-            <h1 className="display-xl" style={{ marginBottom: 14 }}>{book.title}</h1>
+            <h1 className="display-xl" style={{ marginBottom: 14 }}>
+              {book.title}
+            </h1>
             <div style={{ fontSize: 18, color: 'var(--ink-2)', marginBottom: 24 }}>
               by <b style={{ color: 'var(--ink)' }}>{authorLine}</b>
             </div>
 
             <div style={{ display: 'flex', gap: 32, marginBottom: 28, flexWrap: 'wrap' }}>
-              <Metric value={book.stats.avg_rating ? book.stats.avg_rating.toFixed(1) : '-'} label={`${book.stats.rating_count.toLocaleString()} ratings`} accent />
+              <Metric
+                value={book.stats.avg_rating ? book.stats.avg_rating.toFixed(1) : '-'}
+                label={`${book.stats.rating_count.toLocaleString()} ratings`}
+                accent
+              />
               {book.page_count && <Metric value={book.page_count} label="pages" />}
               <Metric value={book.stats.read_count} label="readers" />
               <Metric value={threads.length} label="threads" />
             </div>
 
             {book.description && (
-              <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--ink-2)', maxWidth: 720, marginBottom: 20 }}>
+              <p
+                style={{
+                  fontSize: 16,
+                  lineHeight: 1.6,
+                  color: 'var(--ink-2)',
+                  maxWidth: 720,
+                  marginBottom: 20,
+                }}
+              >
                 {book.description}
               </p>
             )}
@@ -348,18 +392,33 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
             {book.genres.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {book.genres.map((genre) => (
-                  <span key={genre.id} className="chip chip-pulp">{genre.name}</span>
+                  <span key={genre.id} className="chip chip-pulp">
+                    {genre.name}
+                  </span>
                 ))}
               </div>
             )}
 
             <div style={{ marginTop: 16 }}>
-              <div className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', marginBottom: 8 }}>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                  color: 'var(--ink-3)',
+                  marginBottom: 8,
+                }}
+              >
                 Tags
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 {tags.map((tag) => (
-                  <span key={tag.id} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    key={tag.id}
+                    className="chip"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
                     #{tag.name}
                     {me && (
                       <button
@@ -368,7 +427,14 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                           await removeTag(supabase, id, tag.id)
                           setTags(await listBookTags(supabase, id))
                         }}
-                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--ink-3)', padding: 0, lineHeight: 1 }}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          cursor: 'pointer',
+                          color: 'var(--ink-3)',
+                          padding: 0,
+                          lineHeight: 1,
+                        }}
                       >
                         x
                       </button>
@@ -377,8 +443,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 ))}
                 {me && (
                   <form
-                    onSubmit={async (e) => {
-                      e.preventDefault()
+                    onSubmit={async (event) => {
+                      event.preventDefault()
                       if (!tagInput.trim()) return
                       await addTag(supabase, id, tagInput)
                       setTagInput('')
@@ -388,19 +454,38 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                   >
                     <input
                       value={tagInput}
-                      onChange={(e) => setTagInput(e.target.value)}
+                      onChange={(event) => setTagInput(event.target.value)}
                       placeholder="add a tag"
-                      style={{ padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 999, fontSize: 12, minWidth: 150 }}
+                      style={{
+                        padding: '8px 10px',
+                        border: '1px solid var(--border)',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        minWidth: 150,
+                      }}
                     />
-                    <button type="submit" className="btn btn-outline btn-sm">Add</button>
+                    <button type="submit" className="btn btn-outline btn-sm">
+                      Add
+                    </button>
                   </form>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="card" style={{ padding: 20, width: 260, background: 'var(--ink)', color: 'var(--paper)', borderColor: 'var(--ink)' }}>
-            <div className="eyebrow" style={{ color: 'var(--ink-4)', marginBottom: 12 }}>your rating</div>
+          <div
+            className="card"
+            style={{
+              padding: 20,
+              width: 260,
+              background: 'var(--ink)',
+              color: 'var(--paper)',
+              borderColor: 'var(--ink)',
+            }}
+          >
+            <div className="eyebrow" style={{ color: 'var(--ink-4)', marginBottom: 12 }}>
+              your rating
+            </div>
             <div style={{ marginBottom: 16 }}>
               <HalfStarInput
                 value={myRating}
@@ -449,25 +534,54 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       {showReview && (
         <Modal onClose={() => setShowReview(false)}>
           <form onSubmit={submitReview}>
-            <div className="eyebrow" style={{ marginBottom: 8 }}>Write a review</div>
-            <h3 className="serif" style={{ fontSize: 26, marginBottom: 14 }}>{book.title}</h3>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>
+              Write a review
+            </div>
+            <h3 className="serif" style={{ fontSize: 26, marginBottom: 14 }}>
+              {book.title}
+            </h3>
             <div style={{ marginBottom: 14 }}>
               <HalfStarInput value={reviewRating} onChange={setReviewRating} size={30} />
             </div>
             <textarea
               value={reviewBody}
-              onChange={(e) => setReviewBody(e.target.value)}
+              onChange={(event) => setReviewBody(event.target.value)}
               rows={5}
               placeholder="What did you think?"
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 14,
+                resize: 'vertical',
+                fontFamily: 'inherit',
+              }}
             />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-3)', marginTop: 10 }}>
-              <input type="checkbox" checked={reviewSpoiler} onChange={(e) => setReviewSpoiler(e.target.checked)} />
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                color: 'var(--ink-3)',
+                marginTop: 10,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={reviewSpoiler}
+                onChange={(event) => setReviewSpoiler(event.target.checked)}
+              />
               Contains spoilers
             </label>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Post review</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowReview(false)}>Cancel</button>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>
+                Post review
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowReview(false)}>
+                Cancel
+              </button>
             </div>
           </form>
         </Modal>
@@ -476,24 +590,47 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       {showThread && (
         <Modal onClose={() => setShowThread(false)}>
           <form onSubmit={submitThread}>
-            <div className="eyebrow" style={{ marginBottom: 8 }}>Start a thread</div>
-            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>{book.title}</h3>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>
+              Start a thread
+            </div>
+            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>
+              {book.title}
+            </h3>
             <input
               value={threadTitle}
-              onChange={(e) => setThreadTitle(e.target.value)}
+              onChange={(event) => setThreadTitle(event.target.value)}
               placeholder="Thread title"
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 15, marginBottom: 10 }}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 15,
+                marginBottom: 10,
+              }}
             />
             <textarea
               value={threadBody}
-              onChange={(e) => setThreadBody(e.target.value)}
+              onChange={(event) => setThreadBody(event.target.value)}
               rows={5}
               placeholder="What do you want to discuss?"
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 14,
+                resize: 'vertical',
+                fontFamily: 'inherit',
+              }}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Post thread</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowThread(false)}>Cancel</button>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>
+                Post thread
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowThread(false)}>
+                Cancel
+              </button>
             </div>
           </form>
         </Modal>
@@ -502,40 +639,159 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       {showLog && (
         <Modal onClose={() => setShowLog(false)}>
           <form onSubmit={submitLog}>
-            <div className="eyebrow" style={{ marginBottom: 8 }}>Log reading session</div>
-            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>{book.title}</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>
+              Log reading session
+            </div>
+            <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>
+              {book.title}
+            </h3>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
               <div>
-                <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Pages read</label>
-                <input value={logPages} onChange={(e) => setLogPages(e.target.value)} type="number" min={0} style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
+                <label
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.12em',
+                    color: 'var(--ink-3)',
+                    fontWeight: 600,
+                  }}
+                >
+                  Pages read
+                </label>
+                <input
+                  value={logPages}
+                  onChange={(event) => setLogPages(event.target.value)}
+                  type="number"
+                  min={0}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    marginTop: 6,
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    fontSize: 14,
+                  }}
+                />
               </div>
               <div>
-                <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Minutes</label>
-                <input value={logMinutes} onChange={(e) => setLogMinutes(e.target.value)} type="number" min={0} style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
+                <label
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.12em',
+                    color: 'var(--ink-3)',
+                    fontWeight: 600,
+                  }}
+                >
+                  Minutes
+                </label>
+                <input
+                  value={logMinutes}
+                  onChange={(event) => setLogMinutes(event.target.value)}
+                  type="number"
+                  min={0}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    marginTop: 6,
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    fontSize: 14,
+                  }}
+                />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Date</label>
-                <input value={logDate} onChange={(e) => setLogDate(e.target.value)} type="date" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14 }} />
+                <label
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.12em',
+                    color: 'var(--ink-3)',
+                    fontWeight: 600,
+                  }}
+                >
+                  Date
+                </label>
+                <input
+                  value={logDate}
+                  onChange={(event) => setLogDate(event.target.value)}
+                  type="date"
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    marginTop: 6,
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    fontSize: 14,
+                  }}
+                />
               </div>
             </div>
-            <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>Notes (optional)</label>
-            <textarea value={logNotes} onChange={(e) => setLogNotes(e.target.value)} rows={3} placeholder="What hit different?" style={{ width: '100%', padding: '10px 12px', marginTop: 6, borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
+            <label
+              className="mono"
+              style={{
+                fontSize: 10,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                color: 'var(--ink-3)',
+                fontWeight: 600,
+              }}
+            >
+              Notes (optional)
+            </label>
+            <textarea
+              value={logNotes}
+              onChange={(event) => setLogNotes(event.target.value)}
+              rows={3}
+              placeholder="What hit different?"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                marginTop: 6,
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 14,
+                resize: 'vertical',
+                fontFamily: 'inherit',
+              }}
+            />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>Log session</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowLog(false)}>Cancel</button>
+              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>
+                Log session
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowLog(false)}>
+                Cancel
+              </button>
             </div>
           </form>
         </Modal>
       )}
 
-      <div style={{ padding: '40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
+      <div
+        style={{
+          padding: '40px',
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1fr) 340px',
+          gap: 40,
+        }}
+      >
         <main>
           <div className="tabs" style={{ marginBottom: 16 }}>
             <button className={'tab' + (tab === 'threads' ? ' active' : '')} onClick={() => setTab('threads')}>
-              Threads · {threads.length}
+              Threads - {threads.length}
             </button>
             <button className={'tab' + (tab === 'reviews' ? ' active' : '')} onClick={() => setTab('reviews')}>
-              Reviews · {reviews.length}
+              Reviews - {reviews.length}
             </button>
           </div>
 
@@ -550,18 +806,46 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                   <div key={thread.id} id={`thread-${thread.id}`} className="card" style={{ padding: 18 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                       <Avatar user={user} size={28} />
-                      <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-                        <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b> · {new Date(thread.created_at).toLocaleDateString()}
+                      <div style={{ fontSize: 12, color: 'var(--ink-3)', flex: 1 }}>
+                        <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b> -{' '}
+                        {new Date(thread.created_at).toLocaleDateString()}
                       </div>
+                      {me && me.id !== thread.user_id && (
+                        <ReportButton
+                          entityType="book_post"
+                          entityId={thread.id}
+                          targetUserId={thread.user_id}
+                          compact
+                        />
+                      )}
                     </div>
-                    <div className="serif" style={{ fontSize: 20, lineHeight: 1.2, marginBottom: 6 }}>{thread.title}</div>
+
+                    <div className="serif" style={{ fontSize: 20, lineHeight: 1.2, marginBottom: 6 }}>
+                      {thread.title}
+                    </div>
                     {thread.body && (
-                      <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          color: 'var(--ink-2)',
+                          lineHeight: 1.55,
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
                         {thread.body}
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginTop: 14,
+                        paddingTop: 12,
+                        borderTop: '1px solid var(--border)',
+                      }}
+                    >
                       <PostVoteButtons
                         postId={thread.id}
                         initialCount={thread.upvotes}
@@ -573,20 +857,30 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                           if (!commentsOpen && !commentsByPost[thread.id]) {
                             await loadComments(thread.id)
                           }
-                          setOpenComments((current) => ({ ...current, [thread.id]: !commentsOpen }))
+                          setOpenComments((current) => ({
+                            ...current,
+                            [thread.id]: !commentsOpen,
+                          }))
                         }}
                       >
-                        <Icon name="message" size={13} /> {thread.comment_count ?? comments.length} {(thread.comment_count ?? comments.length) === 1 ? 'reply' : 'replies'}
+                        <Icon name="message" size={13} /> {thread.comment_count ?? comments.length}{' '}
+                        {(thread.comment_count ?? comments.length) === 1 ? 'reply' : 'replies'}
                       </button>
                       <button
                         className="btn btn-ghost btn-sm"
                         style={{ marginLeft: 'auto' }}
                         onClick={async () => {
-                          const r = await shareUrl({
+                          const result = await shareUrl({
                             title: thread.title,
                             path: `/book/${id}#thread-${thread.id}`,
                           })
-                          flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+                          flash(
+                            result === 'copied'
+                              ? 'Link copied'
+                              : result === 'shared'
+                              ? 'Shared'
+                              : 'Could not share'
+                          )
                         }}
                       >
                         <Icon name="share" size={13} /> Share
@@ -601,7 +895,6 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                             node={node}
                             depth={0}
                             maxDepth={MAX_REPLY_DEPTH}
-                            threadId={thread.id}
                             me={me}
                             replyingTo={replyingTo[thread.id] ?? null}
                             replyDraft={replyDrafts[thread.id] ?? ''}
@@ -639,11 +932,14 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
                         {me ? (
                           <form
-                            onSubmit={async (e) => {
-                              e.preventDefault()
+                            onSubmit={async (event) => {
+                              event.preventDefault()
                               const value = commentDrafts[thread.id]?.trim()
                               if (!value) return
-                              await createComment(supabase, { postId: thread.id, body: value })
+                              await createComment(supabase, {
+                                postId: thread.id,
+                                body: value,
+                              })
                               setCommentDrafts((current) => ({ ...current, [thread.id]: '' }))
                               await loadComments(thread.id)
                               await refreshThreads()
@@ -652,14 +948,29 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                           >
                             <input
                               value={commentDrafts[thread.id] ?? ''}
-                              onChange={(e) => setCommentDrafts((current) => ({ ...current, [thread.id]: e.target.value }))}
+                              onChange={(event) =>
+                                setCommentDrafts((current) => ({
+                                  ...current,
+                                  [thread.id]: event.target.value,
+                                }))
+                              }
                               placeholder="Add a comment"
-                              style={{ flex: 1, padding: '10px 12px', borderRadius: 999, border: '1px solid var(--border)', fontSize: 13 }}
+                              style={{
+                                flex: 1,
+                                padding: '10px 12px',
+                                borderRadius: 999,
+                                border: '1px solid var(--border)',
+                                fontSize: 13,
+                              }}
                             />
-                            <button type="submit" className="btn btn-outline btn-sm">Comment</button>
+                            <button type="submit" className="btn btn-outline btn-sm">
+                              Comment
+                            </button>
                           </form>
                         ) : (
-                          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>Sign in to join the thread.</div>
+                          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                            Sign in to join the thread.
+                          </div>
                         )}
                       </div>
                     )}
@@ -668,7 +979,10 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               })}
 
               {threads.length === 0 && (
-                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                <div
+                  className="card"
+                  style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}
+                >
                   No threads yet. Start the conversation.
                 </div>
               )}
@@ -680,28 +994,51 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               {reviews.map((review) => {
                 const user = toUiUser(review.profile)
                 const saved = savedReviewIds.includes(review.id)
+
                 return (
-                  <div key={review.id} className="card" style={{ padding: 20 }}>
+                  <div key={review.id} id={`review-${review.id}`} className="card" style={{ padding: 20 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                       <Avatar user={user} size={32} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14, fontWeight: 600 }}>{user.name}</div>
                         <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-                          @{user.handle} · {new Date(review.created_at).toLocaleDateString()}
+                          @{user.handle} - {new Date(review.created_at).toLocaleDateString()}
                         </div>
                       </div>
-                      <StarDisplay value={review.rating} size={14} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <StarDisplay value={review.rating} size={14} />
+                        {me && me.id !== review.user_id && (
+                          <ReportButton
+                            entityType="review"
+                            entityId={review.id}
+                            targetUserId={review.user_id}
+                            compact
+                          />
+                        )}
+                      </div>
                     </div>
+
                     <p style={{ fontSize: 15, lineHeight: 1.55 }}>
                       {review.contains_spoiler ? (
                         <>
-                          <span className="spoiler-tag">Spoiler</span> <Spoiler>{review.body ?? ''}</Spoiler>
+                          <span className="spoiler-tag">Spoiler</span>{' '}
+                          <Spoiler>{review.body ?? ''}</Spoiler>
                         </>
                       ) : (
                         review.body
                       )}
                     </p>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', alignItems: 'center' }}>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        marginTop: 14,
+                        paddingTop: 14,
+                        borderTop: '1px solid var(--border)',
+                        alignItems: 'center',
+                      }}
+                    >
                       <LikeButton
                         reviewId={review.id}
                         initialCount={review.liked_count}
@@ -712,7 +1049,9 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                         onClick={async () => {
                           const nextSaved = await toggleReviewSave(supabase, review.id)
                           setSavedReviewIds((current) =>
-                            nextSaved ? [...current, review.id] : current.filter((id) => id !== review.id)
+                            nextSaved
+                              ? [...current, review.id]
+                              : current.filter((savedId) => savedId !== review.id)
                           )
                         }}
                       >
@@ -722,11 +1061,17 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                         className="btn btn-ghost btn-sm"
                         style={{ marginLeft: 'auto' }}
                         onClick={async () => {
-                          const r = await shareUrl({
+                          const result = await shareUrl({
                             title: `${user.name}'s review of ${book.title}`,
                             path: `/book/${id}#review-${review.id}`,
                           })
-                          flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+                          flash(
+                            result === 'copied'
+                              ? 'Link copied'
+                              : result === 'shared'
+                              ? 'Shared'
+                              : 'Could not share'
+                          )
                         }}
                       >
                         <Icon name="share" size={13} /> Share
@@ -737,7 +1082,10 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               })}
 
               {reviews.length === 0 && (
-                <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                <div
+                  className="card"
+                  style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}
+                >
                   Be the first to review this book.
                 </div>
               )}
@@ -747,13 +1095,23 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
         <aside style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card" style={{ padding: 20 }}>
-            <div className="eyebrow" style={{ marginBottom: 12 }}>Quick stats</div>
+            <div className="eyebrow" style={{ marginBottom: 12 }}>
+              Quick stats
+            </div>
             <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.8 }}>
-              <div>Ratings: <b>{book.stats.rating_count.toLocaleString()}</b></div>
-              <div>Reviews: <b>{book.stats.review_count.toLocaleString()}</b></div>
-              <div>Readers: <b>{book.stats.read_count.toLocaleString()}</b></div>
+              <div>
+                Ratings: <b>{book.stats.rating_count.toLocaleString()}</b>
+              </div>
+              <div>
+                Reviews: <b>{book.stats.review_count.toLocaleString()}</b>
+              </div>
+              <div>
+                Readers: <b>{book.stats.read_count.toLocaleString()}</b>
+              </div>
               {book.stats.avg_rating !== null && (
-                <div>Avg rating: <b style={{ color: 'var(--pulp)' }}>{book.stats.avg_rating.toFixed(2)}</b></div>
+                <div>
+                  Avg rating: <b style={{ color: 'var(--pulp)' }}>{book.stats.avg_rating.toFixed(2)}</b>
+                </div>
               )}
             </div>
           </div>
@@ -765,7 +1123,9 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {book.authors.map((author) => (
-                  <div key={author.id} style={{ fontSize: 14, fontWeight: 600 }}>{author.name}</div>
+                  <div key={author.id} style={{ fontSize: 14, fontWeight: 600 }}>
+                    {author.name}
+                  </div>
                 ))}
               </div>
             </div>
@@ -787,10 +1147,21 @@ function Metric({
 }) {
   return (
     <div>
-      <div className="serif" style={{ fontSize: 44, lineHeight: 1, color: accent ? 'var(--pulp)' : 'var(--ink)' }}>
+      <div
+        className="serif"
+        style={{ fontSize: 44, lineHeight: 1, color: accent ? 'var(--pulp)' : 'var(--ink)' }}
+      >
         {value}
       </div>
-      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+      <div
+        className="mono"
+        style={{
+          fontSize: 11,
+          color: 'var(--ink-3)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+        }}
+      >
         {label}
       </div>
     </div>
@@ -799,22 +1170,41 @@ function Metric({
 
 function formatToast(base: string, awarded: { title: string }[]) {
   if (!awarded.length) return base
-  return `${base} · badge unlocked: ${awarded.map((badge) => badge.title).join(', ')}`
+  return `${base} - badge unlocked: ${awarded.map((badge) => badge.title).join(', ')}`
 }
 
 function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'grid', placeItems: 'center', padding: 20 }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ padding: 28, width: 520, maxWidth: '100%' }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 100,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 20,
+      }}
+    >
+      <div
+        className="card"
+        onClick={(event) => event.stopPropagation()}
+        style={{ padding: 28, width: 520, maxWidth: '100%' }}
+      >
         {children}
       </div>
     </div>
   )
-}
-
-type CommentTreeNode = {
-  comment: DbBookPostComment
-  children: CommentTreeNode[]
 }
 
 function buildCommentTree(comments: DbBookPostComment[], maxDepth: number): CommentTreeNode[] {
@@ -822,6 +1212,7 @@ function buildCommentTree(comments: DbBookPostComment[], maxDepth: number): Comm
   for (const comment of comments) {
     byId.set(comment.id, { comment, children: [] })
   }
+
   const roots: CommentTreeNode[] = []
   const depthOf = (id: string): number => {
     let depth = 0
@@ -835,6 +1226,7 @@ function buildCommentTree(comments: DbBookPostComment[], maxDepth: number): Comm
     }
     return depth
   }
+
   for (const comment of comments) {
     const node = byId.get(comment.id)!
     const parentId = comment.parent_id
@@ -842,14 +1234,15 @@ function buildCommentTree(comments: DbBookPostComment[], maxDepth: number): Comm
       roots.push(node)
       continue
     }
+
     const parentDepth = depthOf(parentId)
     if (parentDepth + 1 >= maxDepth) {
-      const parent = byId.get(parentId)!
-      parent.children.push(node)
+      byId.get(parentId)!.children.push(node)
     } else {
       byId.get(parentId)!.children.push(node)
     }
   }
+
   return roots
 }
 
@@ -857,7 +1250,6 @@ function CommentNode({
   node,
   depth,
   maxDepth,
-  threadId,
   me,
   replyingTo,
   replyDraft,
@@ -870,7 +1262,6 @@ function CommentNode({
   node: CommentTreeNode
   depth: number
   maxDepth: number
-  threadId: string
   me: DbProfile | null
   replyingTo: string | null
   replyDraft: string
@@ -896,10 +1287,18 @@ function CommentNode({
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <Avatar user={commenter} size={22} />
-        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-          <b style={{ color: 'var(--ink)' }}>@{commenter.handle}</b>{' '}·{' '}
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', flex: 1 }}>
+          <b style={{ color: 'var(--ink)' }}>@{commenter.handle}</b> -{' '}
           {new Date(node.comment.created_at).toLocaleDateString()}
         </div>
+        {me && me.id !== node.comment.user_id && (
+          <ReportButton
+            entityType="book_post_comment"
+            entityId={node.comment.id}
+            targetUserId={node.comment.user_id}
+            compact
+          />
+        )}
         {me?.id === node.comment.user_id && (
           <button
             className="btn btn-ghost btn-sm"
@@ -910,6 +1309,7 @@ function CommentNode({
           </button>
         )}
       </div>
+
       <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
         {node.comment.contains_spoiler ? (
           <Spoiler>{node.comment.body}</Spoiler>
@@ -931,8 +1331,8 @@ function CommentNode({
 
       {isReplying && me && (
         <form
-          onSubmit={async (e) => {
-            e.preventDefault()
+          onSubmit={async (event) => {
+            event.preventDefault()
             await onSubmitReply(node.comment.id)
           }}
           style={{ display: 'flex', gap: 8, marginTop: 8 }}
@@ -940,7 +1340,7 @@ function CommentNode({
           <input
             autoFocus
             value={replyDraft}
-            onChange={(e) => onChangeReplyDraft(e.target.value)}
+            onChange={(event) => onChangeReplyDraft(event.target.value)}
             placeholder={`Reply to @${commenter.handle}`}
             style={{
               flex: 1,
@@ -967,7 +1367,6 @@ function CommentNode({
               node={child}
               depth={depth + 1}
               maxDepth={maxDepth}
-              threadId={threadId}
               me={me}
               replyingTo={replyingTo}
               replyDraft={replyDraft}
@@ -982,4 +1381,12 @@ function CommentNode({
       )}
     </div>
   )
+}
+
+function todayInputValue() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }

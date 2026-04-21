@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Cover } from '@/components/redesign/Cover'
+import { ReportButton } from '@/components/redesign/ReportButton'
 import { createClient } from '@/lib/supabase/client'
 import {
   createClub,
@@ -171,6 +172,14 @@ export default function ClubsPage() {
                     {club.is_public ? 'Public' : 'Private'}
                   </span>
                   <div style={{ display: 'flex', gap: 8 }}>
+                    {me && me.id !== club.owner_id && (
+                      <ReportButton
+                        entityType="club"
+                        entityId={club.id}
+                        targetUserId={club.owner_id}
+                        compact
+                      />
+                    )}
                     <Link href={`/clubs/${club.id}`} className="btn btn-outline btn-sm">
                       Open
                     </Link>

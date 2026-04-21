@@ -4,7 +4,7 @@ This is the single source of truth for project status and the next must-have que
 
 ## Current Status
 
-Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, and broader-catalog search/import all read or write through `lib/db.ts`.
+Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, and broader-catalog search/import all read or write through `lib/db.ts`.
 
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
@@ -19,53 +19,32 @@ Latest completed pushes:
 - Direct bookcase add/remove from the visible `+` slots on profile shelves.
 - Search now reaches beyond the local Supabase catalog. `app/api/catalog/search/route.ts` queries Open Library through `lib/openlibrary.ts`, the search page shows broader-catalog matches, and `importCatalogBook` in `lib/db.ts` lets users import a missing result straight into Bookcase.
 - Password recovery and email confirmation recovery are now live. Login links to `/forgot-password`, signup can resend confirmation emails, `/auth/callback` finishes Supabase email redirects, `/auth/confirm` forwards token-hash links into that flow, and `/reset-password` updates the user's password in-app.
+- Reporting now has repo-backed storage and UI. Reviews, threads, comments, and clubs all expose `ReportButton`, backed by `content_reports`.
+- Blocking is now enforced through the app read paths. Blocked users are filtered out of feeds, search results, clubs, notifications, and profile activity, and profile pages hide shelf data when a block exists.
+- Notification settings are now real account-backed preferences instead of local-only placeholders. `notification_preferences` gates notification inserts at write time.
+- New-user onboarding is stronger. `/home` has a real checklist, Goodreads import ends with concrete next steps, and the first "add books" step now pushes new users toward `/import`.
+- Reading tracker reliability is tighter. Same-day same-book logs accumulate instead of clobbering, streaks derive from actual session dates, yearly goal sync is timezone-safe, and `/streak` now shows recent sessions back to the reader.
+- Catalog fallback is better. Missing covers now fall back to ISBN-driven Open Library covers so sparse catalog rows look more complete without waiting on a backfill.
 
-## Must-Have Queue
+## Immediate Follow-Up
 
-### 1. Moderation, reporting, and blocking
-- Add report actions for reviews, threads, comments, and clubs.
-- Add block-user UX and enforce it in feeds, notifications, and profiles.
-- Add real storage/workflow behind reports.
-
-Why this matters:
-- This is a public social app. Safety cannot stay implicit.
-
-### 2. Notification settings that actually work
-- The settings toggles cannot remain local-only if they stay visible.
-- Either store server-side notification prefs and honor them at write time, or hide the toggles until they are real.
+### 1. Apply the new Supabase migration
+- Run `supabase/migrations/20260421_safety_preferences_tracker.sql` against the live project before relying on report submissions or account-backed notification preferences.
 
 Why this matters:
-- Fake settings break trust.
+- The repo now contains the schema, but production still needs the tables and RLS policies created.
 
-### 3. Better onboarding after signup/import
-- After Goodreads import or skip, guide the user into favorites, follows, clubs, ratings, and first reading session.
-- Add useful empty states on `/home`.
-
-Why this matters:
-- Signup now reaches import, but the first-session path is still incomplete.
-
-### 4. Streak and reading tracker reliability
-- The streak needs to update correctly when a user logs reading and it needs to stay accurate across refreshes, same-day logs, and day changes.
-- The reading tracker flow needs to reliably save session data, show it back to the user, and keep profile and goal surfaces in sync.
-- Re-check the edge cases around duplicate same-day sessions, timezone boundaries, and how imported history should or should not affect the live streak.
+### 2. Manual live smoke test
+- Re-run the end-to-end deploy smoke test after the next push so we verify the new moderation, preferences, onboarding, and tracker flows on the real Cloudflare worker.
 
 Why this matters:
-- Streaks and tracking are core habit loops in the product, so if they feel inconsistent the app loses trust fast.
-- Users need to believe that logging reading actually counts.
-
-### 5. Book catalog quality
-- Backfill or fetch missing `cover_url` values.
-- Prefer ISBN-driven enrichment.
-- Clean up duplicate editions as add-a-book lands.
-
-Why this matters:
-- Catalog trust is product trust in a reading app.
+- This pass touched several core loops and needs a real browser check, not just local build success.
 
 ## Lower-Priority But Real
 
 - Persist bookcase row config server-side and support custom row names.
 - Down/up-vote button on the home feed card, since voting still only works on the book page.
-- Notify the parent comment author on reply, since replies currently notify only the thread author.
+- Add an internal moderation inbox or admin workflow for `content_reports`, since storage exists now but there is no reviewer UI yet.
 - Explore grid sizing cleanup.
 - More visible share-copy confirmation.
 - Search caching or full-text search.
@@ -85,6 +64,8 @@ Suggested path:
 - Rate a book with a half-star value
 - Shelf a book
 - Add and remove a book directly from the profile bookcase
+- Block a reader and verify they disappear from search/feed/profile activity
+- Submit a report on a review, thread, comment, and club
 - Write a review
 - Like another user's review
 - Share a link
@@ -115,11 +96,13 @@ Suggested path:
 - `lib/share.ts`: Web Share API wrapper with clipboard fallback
 - `lib/supabase/client.ts` and `lib/supabase/server.ts`: browser/server Supabase factories
 - `lib/supabase/config.ts`: repo-safe public Supabase config
+- `components/redesign/ReportButton.tsx`: reusable report popover for reviews, threads, comments, and clubs
 - `app/error.tsx` and `app/not-found.tsx`: app-level error and 404 boundaries
 - `app/(auth)/forgot-password/page.tsx`, `app/(auth)/reset-password/page.tsx`, and `app/(auth)/auth/callback/page.tsx`: password reset request, password update, and Supabase email redirect handling
 - `app/auth/confirm/route.ts`: compatibility redirect for token-hash email links
 - `app/api/catalog/search/route.ts`: broader-catalog search proxy
 - `app/(main)/import/page.tsx`: Goodreads onboarding/import UI
+- `app/(main)/streak/page.tsx`: streak tracker, goal editor, and recent session history
 - `app/(main)/profile/[username]/page.tsx`: profile page with bookcase and inline picker modal for add/remove
 - `app/(main)/search/page.tsx`: local search plus broader-catalog import UI
 - `components/redesign/Bookcase.tsx`: reusable wooden shelf component with `onAddToShelf` and `onRemoveFromShelf`
@@ -129,6 +112,7 @@ Suggested path:
 - `components/redesign/Sidebar.tsx`: profile summary, unread count, streak
 - `components/redesign/home/PostComposer.tsx`: inline book picker and post form
 - `app/auth/signout/route.ts`: POST handler for sidebar signout
+- `supabase/migrations/20260421_safety_preferences_tracker.sql`: notification preference, report storage, and block-policy migration
 
 ## Gotchas
 
@@ -141,6 +125,7 @@ Suggested path:
 - `roadmap_features.has_voted` is hydrated per request from `roadmap_votes`; it is not stored.
 - Async page params in Next 15 should use `use()` in client components or `await params` in server components.
 - `notifications` RLS requires `auth.uid() = actor_id`, so client-created notifications must use the current user as actor.
+- Reporting and live notification preference storage require the `20260421_safety_preferences_tracker.sql` migration to be applied in Supabase.
 - Supabase Auth needs the app origin and `/auth/callback` on the redirect allow list or confirmation/reset emails will bounce before the app can finish the flow.
 - The bookcase row 2 and row 3 shelf choice is still stored in `localStorage` under `bookcase-layout:{profileId}` and is not synced across devices yet.
 

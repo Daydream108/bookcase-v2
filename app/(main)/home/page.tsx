@@ -4,11 +4,10 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
-import { Icon } from '@/components/redesign/Icon'
-import { PostComposer } from '@/components/redesign/home/PostComposer'
 import { createClient } from '@/lib/supabase/client'
 import {
   getCurrentProfile,
+  getOnboardingState,
   getReadingGoal,
   getStreak,
   listPopularBooks,
@@ -19,9 +18,11 @@ import {
   type DbActivityEvent,
   type DbBookCard,
   type DbBookPost,
+  type DbOnboardingState,
   type DbProfile,
   type DbReadingGoal,
 } from '@/lib/db'
+import { PostComposer } from '@/components/redesign/home/PostComposer'
 
 export default function HomePage() {
   const supabase = useMemo(() => createClient(), [])
@@ -31,6 +32,7 @@ export default function HomePage() {
   const [trending, setTrending] = useState<DbBookCard[]>([])
   const [streak, setStreak] = useState({ current: 0, longest: 0 })
   const [goal, setGoal] = useState<DbReadingGoal | null>(null)
+  const [onboarding, setOnboarding] = useState<DbOnboardingState | null>(null)
   const [loading, setLoading] = useState(true)
 
   const refresh = async () => {
@@ -51,13 +53,15 @@ export default function HomePage() {
       if (cancelled) return
       setMe(profile)
       if (profile) {
-        const [s, g] = await Promise.all([
+        const [s, g, nextOnboarding] = await Promise.all([
           getStreak(supabase, profile.id),
           getReadingGoal(supabase),
+          getOnboardingState(supabase),
         ])
         if (cancelled) return
         setStreak({ current: s.current_streak ?? 0, longest: s.longest_streak ?? 0 })
         setGoal(g)
+        setOnboarding(nextOnboarding)
       }
       await refresh()
       if (!cancelled) setLoading(false)
@@ -76,6 +80,7 @@ export default function HomePage() {
   }, [])
 
   const displayName = me?.display_name ?? me?.username ?? 'reader'
+  const onboardingSteps = buildOnboardingSteps(me, onboarding)
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
@@ -84,14 +89,14 @@ export default function HomePage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div>
               <div className="eyebrow" style={{ color: 'var(--pulp-deep)' }}>
-                🔥 {streak.current}-day streak {streak.current > 0 ? '· keep it alive' : '· start one today'}
+                {streak.current > 0 ? `${streak.current}-day streak · keep it alive` : 'Start your streak today'}
               </div>
               <h1 className="display-md" style={{ marginTop: 8 }}>
                 {greeting}, {displayName}.
               </h1>
               <div style={{ fontSize: 14, color: 'var(--ink-2)', marginTop: 8 }}>
                 <Link href="/streak" className="link-u" style={{ color: 'var(--pulp-deep)', fontWeight: 600 }}>
-                  Log today&apos;s session →
+                  Log today&apos;s session -&gt;
                 </Link>
               </div>
             </div>
@@ -108,6 +113,43 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+
+        {me && onboardingSteps.length > 0 && (
+          <div className="card" style={{ padding: 20, marginBottom: 20, borderColor: 'color-mix(in oklab, var(--moss) 35%, var(--border))', background: 'linear-gradient(140deg, color-mix(in oklab, var(--moss) 10%, var(--paper)), var(--paper))' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+              <div>
+                <div className="eyebrow" style={{ color: 'var(--moss)', marginBottom: 6 }}>New shelf checklist</div>
+                <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+                  Finish a few foundational steps so your home feed has something real to work with.
+                </div>
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                {onboardingSteps.filter((step) => step.done).length}/{onboardingSteps.length} done
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {onboardingSteps.map((step) => (
+                <div key={step.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>
+                      {step.done ? 'Done' : 'Next'} · {step.label}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{step.description}</div>
+                  </div>
+                  {step.done ? (
+                    <span className="chip" style={{ color: 'var(--moss)', borderColor: 'color-mix(in oklab, var(--moss) 30%, var(--border))' }}>
+                      Complete
+                    </span>
+                  ) : (
+                    <Link href={step.href} className="btn btn-outline btn-sm">
+                      {step.cta}
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {me && (
           <div className="card" style={{ padding: 20, marginBottom: 20 }}>
@@ -141,13 +183,15 @@ export default function HomePage() {
 
         <PostComposer me={me} onPosted={refresh} />
 
-        <div className="eyebrow" style={{ marginBottom: 12 }}>🧵 Latest threads</div>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest threads</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
           {loading ? (
-            <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>Loading…</div>
+            <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>Loading...</div>
           ) : posts.length === 0 ? (
             <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>
-              Nothing yet. Be the first to post — use the composer above.
+              {me
+                ? 'Your feed is quiet so far. Rate a book, follow a reader, or start the first thread above and this space will wake up fast.'
+                : 'Nothing yet. Sign in and start the first thread.'}
             </div>
           ) : (
             posts.map((p) => {
@@ -185,10 +229,14 @@ export default function HomePage() {
           )}
         </div>
 
-        <div className="eyebrow" style={{ marginBottom: 12 }}>📚 Latest shelf activity</div>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest shelf activity</div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {activity.length === 0 ? (
-            <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>No activity yet.</div>
+            <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
+              {me
+                ? 'No activity yet. Log a reading session, leave a review, or follow another reader to start shaping the feed.'
+                : 'No activity yet.'}
+            </div>
           ) : (
             activity.map((a) => {
               const u = toUiUser(a.profile)
@@ -212,7 +260,7 @@ export default function HomePage() {
       <aside style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div className="eyebrow">🔥 Popular</div>
+            <div className="eyebrow">Popular</div>
             <Link href="/explore" className="link-u" style={{ fontSize: 12, color: 'var(--pulp)', fontWeight: 600 }}>
               See all
             </Link>
@@ -230,7 +278,7 @@ export default function HomePage() {
                     <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
                     <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{ui.author}</div>
                     <div style={{ fontSize: 11, color: 'var(--pulp)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
-                      {b.stats.avg_rating ? `★ ${b.stats.avg_rating.toFixed(1)}` : '★ —'} · {b.stats.rating_count} ratings
+                      {b.stats.avg_rating ? `★ ${b.stats.avg_rating.toFixed(1)}` : '★ -'} · {b.stats.rating_count} ratings
                     </div>
                   </div>
                 </Link>
@@ -244,6 +292,55 @@ export default function HomePage() {
       </aside>
     </div>
   )
+}
+
+function buildOnboardingSteps(me: DbProfile | null, onboarding: DbOnboardingState | null) {
+  if (!me || !onboarding) return []
+
+  return [
+    {
+      label: 'Add books to your shelves',
+      description: 'Import from Goodreads first, or save a few books so recommendations and shelves have something to work with.',
+      href: onboarding.hasBooks ? '/search' : '/import',
+      cta: onboarding.hasBooks ? 'Add more' : 'Import books',
+      done: onboarding.hasBooks,
+    },
+    {
+      label: 'Pin favorites to your bookcase',
+      description: 'Your profile shelf looks dramatically better once the top row has a few anchors.',
+      href: `/profile/${me.username ?? ''}`,
+      cta: 'Open profile',
+      done: onboarding.favoritesCount > 0,
+    },
+    {
+      label: 'Follow at least one reader',
+      description: 'Following gives the home feed real people to learn from instead of a blank activity list.',
+      href: '/search',
+      cta: 'Find readers',
+      done: onboarding.followingCount > 0,
+    },
+    {
+      label: 'Join a club',
+      description: 'Clubs are the fastest way to make the app feel alive when you are new.',
+      href: '/clubs',
+      cta: 'Browse clubs',
+      done: onboarding.clubsCount > 0,
+    },
+    {
+      label: 'Log your first reading session',
+      description: 'A streak only becomes trustworthy once you actually start logging sessions.',
+      href: '/streak',
+      cta: 'Open streak',
+      done: onboarding.sessionsCount > 0,
+    },
+    {
+      label: 'Write your first review',
+      description: 'Reviews fuel the social side of Bookcase and improve the home feed quickly.',
+      href: '/search',
+      cta: 'Pick a book',
+      done: onboarding.reviewsCount > 0,
+    },
+  ]
 }
 
 function timeAgo(iso: string): string {

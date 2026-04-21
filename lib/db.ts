@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { GoodreadsImportEntry } from './goodreads'
+import { buildOpenLibraryCoverUrl } from './openlibrary'
 
 type Client = SupabaseClient
 type JsonMap = Record<string, unknown>
@@ -109,6 +110,7 @@ export type DbReadingSession = {
   session_date: string
   notes: string | null
   created_at: string
+  book?: DbBookWithAuthors | null
 }
 
 export type DbNotification = {
@@ -122,6 +124,50 @@ export type DbNotification = {
   is_read: boolean
   created_at: string
   actor?: DbProfile | null
+}
+
+export type DbNotificationPreferences = {
+  user_id: string
+  notify_follows: boolean
+  notify_comments: boolean
+  notify_upvotes: boolean
+  notify_likes: boolean
+  notify_club_activity: boolean
+  notify_roadmap_updates: boolean
+  updated_at: string
+}
+
+export type DbContentReport = {
+  id: string
+  reporter_id: string
+  target_user_id: string | null
+  entity_type: 'review' | 'book_post' | 'book_post_comment' | 'club'
+  entity_id: string
+  reason_category:
+    | 'spam'
+    | 'harassment'
+    | 'hate'
+    | 'spoilers'
+    | 'self_harm'
+    | 'sexual_content'
+    | 'other'
+  details: string | null
+  status: 'open' | 'reviewing' | 'resolved' | 'dismissed'
+  created_at: string
+}
+
+export type DbBlockState = {
+  blockedByMe: boolean
+  blockedMe: boolean
+}
+
+export type DbOnboardingState = {
+  hasBooks: boolean
+  favoritesCount: number
+  followingCount: number
+  clubsCount: number
+  sessionsCount: number
+  reviewsCount: number
 }
 
 export type DbClub = {
@@ -246,7 +292,7 @@ function mapBookWithAuthors(row: any): DbBookWithAuthors {
     id: row.id,
     title: row.title,
     subtitle: row.subtitle ?? null,
-    cover_url: row.cover_url ?? null,
+    cover_url: resolveBookCoverUrl(row),
     description: row.description ?? null,
     published_year: row.published_year ?? null,
     page_count: row.page_count ?? null,
@@ -288,9 +334,42 @@ function currentYear() {
   return new Date().getFullYear()
 }
 
+function localDateString(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function yearFromDateOnly(value?: string | null) {
+  const match = value?.match(/^(\d{4})-/)
+  if (!match) return null
+  const year = Number(match[1])
+  return Number.isFinite(year) ? year : null
+}
+
+function dateOnlyToUtcMs(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return Number.NaN
+  return Date.UTC(year, month - 1, day)
+}
+
+function diffDateOnlyInDays(left: string, right: string) {
+  return Math.round((dateOnlyToUtcMs(right) - dateOnlyToUtcMs(left)) / 86_400_000)
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
+
+const DEFAULT_NOTIFICATION_PREFERENCES = {
+  notify_follows: true,
+  notify_comments: true,
+  notify_upvotes: true,
+  notify_likes: true,
+  notify_club_activity: true,
+  notify_roadmap_updates: true,
+} satisfies Omit<DbNotificationPreferences, 'user_id' | 'updated_at'>
 
 function yearBounds(year: number) {
   return {
@@ -335,6 +414,99 @@ function normalizeImportedIsbn(input?: string | null) {
   return input?.replace(/[^0-9Xx]/g, '').toUpperCase() || null
 }
 
+function resolveBookCoverUrl(input: { cover_url?: string | null; isbn?: string | null }) {
+  return (
+    input.cover_url ??
+    buildOpenLibraryCoverUrl({
+      isbn: normalizeImportedIsbn(input.isbn),
+    }) ??
+    null
+  )
+}
+
+function notificationPreferenceKeyFor(type: DbNotification['type']) {
+  switch (type) {
+    case 'follow':
+      return 'notify_follows'
+    case 'comment':
+    case 'review_on_book':
+    case 'list_mention':
+      return 'notify_comments'
+    case 'upvote':
+      return 'notify_upvotes'
+    case 'like':
+      return 'notify_likes'
+    case 'club_invite':
+      return 'notify_club_activity'
+    case 'roadmap_status':
+      return 'notify_roadmap_updates'
+    default:
+      return null
+  }
+}
+
+function mapNotificationPreferences(row: any): DbNotificationPreferences {
+  return {
+    user_id: row.user_id,
+    notify_follows: row.notify_follows ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_follows,
+    notify_comments: row.notify_comments ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_comments,
+    notify_upvotes: row.notify_upvotes ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_upvotes,
+    notify_likes: row.notify_likes ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_likes,
+    notify_club_activity:
+      row.notify_club_activity ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_club_activity,
+    notify_roadmap_updates:
+      row.notify_roadmap_updates ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_roadmap_updates,
+    updated_at: row.updated_at ?? new Date().toISOString(),
+  }
+}
+
+function computeStreakSnapshot(sessionDates: string[]) {
+  const uniqueDates = Array.from(
+    new Set(
+      sessionDates.filter((value) => value && Number.isFinite(dateOnlyToUtcMs(value)))
+    )
+  ).sort()
+
+  if (!uniqueDates.length) {
+    return {
+      current_streak: 0,
+      longest_streak: 0,
+      last_activity_date: null as string | null,
+    }
+  }
+
+  let longest = 1
+  let currentRun = 1
+
+  for (let index = 1; index < uniqueDates.length; index += 1) {
+    if (diffDateOnlyInDays(uniqueDates[index - 1], uniqueDates[index]) === 1) {
+      currentRun += 1
+      longest = Math.max(longest, currentRun)
+    } else {
+      currentRun = 1
+    }
+  }
+
+  const lastActivityDate = uniqueDates[uniqueDates.length - 1]
+  let trailingRun = 1
+  for (let index = uniqueDates.length - 1; index > 0; index -= 1) {
+    if (diffDateOnlyInDays(uniqueDates[index - 1], uniqueDates[index]) === 1) {
+      trailingRun += 1
+      continue
+    }
+    break
+  }
+
+  const daysSinceLast = diffDateOnlyInDays(lastActivityDate, localDateString())
+  const current = daysSinceLast <= 1 ? trailingRun : 0
+
+  return {
+    current_streak: current,
+    longest_streak: longest,
+    last_activity_date: lastActivityDate,
+  }
+}
+
 function chunkArray<T>(items: T[], size: number) {
   const chunks: T[][] = []
   for (let index = 0; index < items.length; index += size) {
@@ -355,6 +527,75 @@ function countByKey<T extends string>(rows: { [K in T]: string }[], key: T) {
     counts.set(value, (counts.get(value) ?? 0) + 1)
   }
   return counts
+}
+
+async function getNotificationPreferencesForUser(
+  supabase: Client,
+  userId: string
+): Promise<DbNotificationPreferences | null> {
+  const { data, error } = await supabase
+    .from('notification_preferences')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01') return null
+    throw error
+  }
+
+  return data ? mapNotificationPreferences(data) : null
+}
+
+async function getHiddenUserIdsForViewer(
+  supabase: Client,
+  viewerId?: string | null
+): Promise<Set<string>> {
+  if (!viewerId) return new Set<string>()
+
+  const { data } = await supabase
+    .from('blocked_users')
+    .select('user_id, blocked_user_id')
+    .or(`user_id.eq.${viewerId},blocked_user_id.eq.${viewerId}`)
+
+  const hidden = new Set<string>()
+  for (const row of (data ?? []) as Array<{ user_id: string; blocked_user_id: string }>) {
+    if (row.user_id === viewerId && row.blocked_user_id) hidden.add(row.blocked_user_id)
+    if (row.blocked_user_id === viewerId && row.user_id) hidden.add(row.user_id)
+  }
+
+  return hidden
+}
+
+async function getBlockStateForUsers(
+  supabase: Client,
+  viewerId: string,
+  targetUserId: string
+): Promise<DbBlockState> {
+  const [{ data: blockedByMe }, { data: blockedMe }] = await Promise.all([
+    supabase
+      .from('blocked_users')
+      .select('user_id')
+      .eq('user_id', viewerId)
+      .eq('blocked_user_id', targetUserId)
+      .maybeSingle(),
+    supabase
+      .from('blocked_users')
+      .select('user_id')
+      .eq('user_id', targetUserId)
+      .eq('blocked_user_id', viewerId)
+      .maybeSingle(),
+  ])
+
+  return {
+    blockedByMe: Boolean(blockedByMe),
+    blockedMe: Boolean(blockedMe),
+  }
+}
+
+function filterRowsByHiddenUsers<T extends { user_id: string }>(rows: T[], hiddenUserIds: Set<string>) {
+  if (!hiddenUserIds.size) return rows
+  return rows.filter((row) => !hiddenUserIds.has(row.user_id))
 }
 
 async function insertActivityEvent(
@@ -404,6 +645,17 @@ async function insertNotification(
   }
 ) {
   if (input.userId === input.actorId) return
+
+  const [prefs, blockState] = await Promise.all([
+    getNotificationPreferencesForUser(supabase, input.userId),
+    getBlockStateForUsers(supabase, input.actorId, input.userId),
+  ])
+
+  if (blockState.blockedByMe || blockState.blockedMe) return
+
+  const preferenceKey = notificationPreferenceKeyFor(input.type)
+  if (prefs && preferenceKey && prefs[preferenceKey] === false) return
+
   const { error } = await supabase.from('notifications').insert({
     user_id: input.userId,
     actor_id: input.actorId,
@@ -557,6 +809,163 @@ export async function updateProfile(
   if (error) throw error
 }
 
+export async function getNotificationPreferences(
+  supabase: Client
+): Promise<DbNotificationPreferences | null> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return null
+  return getNotificationPreferencesForUser(supabase, user.id)
+}
+
+export async function upsertNotificationPreferences(
+  supabase: Client,
+  patch: Partial<Omit<DbNotificationPreferences, 'user_id' | 'updated_at'>>
+): Promise<DbNotificationPreferences> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
+    .from('notification_preferences')
+    .upsert(
+      {
+        user_id: user.id,
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        ...patch,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
+    .select('*')
+    .single()
+
+  if (error) {
+    if (error.code === '42P01') {
+      throw new Error(
+        'Notification preferences need the latest Supabase migration before they can be saved.'
+      )
+    }
+    throw error
+  }
+  return mapNotificationPreferences(data)
+}
+
+export async function getUserBlockState(
+  supabase: Client,
+  targetUserId: string
+): Promise<DbBlockState> {
+  const user = await getCurrentUser(supabase)
+  if (!user) {
+    return {
+      blockedByMe: false,
+      blockedMe: false,
+    }
+  }
+
+  return getBlockStateForUsers(supabase, user.id, targetUserId)
+}
+
+export async function toggleBlockUser(
+  supabase: Client,
+  targetUserId: string
+): Promise<boolean> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  if (user.id === targetUserId) throw new Error('You cannot block yourself')
+
+  const state = await getBlockStateForUsers(supabase, user.id, targetUserId)
+  if (state.blockedByMe) {
+    const { error } = await supabase
+      .from('blocked_users')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('blocked_user_id', targetUserId)
+    if (error) throw error
+    return false
+  }
+
+  const { error } = await supabase.from('blocked_users').insert({
+    user_id: user.id,
+    blocked_user_id: targetUserId,
+  })
+  if (error) throw error
+
+  await Promise.all([
+    supabase
+      .from('follows')
+      .delete()
+      .eq('follower_id', user.id)
+      .eq('following_id', targetUserId),
+    supabase
+      .from('follows')
+      .delete()
+      .eq('follower_id', targetUserId)
+      .eq('following_id', user.id),
+  ])
+
+  return true
+}
+
+export async function createContentReport(
+  supabase: Client,
+  input: {
+    entityType: DbContentReport['entity_type']
+    entityId: string
+    targetUserId?: string | null
+    reasonCategory: DbContentReport['reason_category']
+    details?: string | null
+  }
+): Promise<DbContentReport> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
+    .from('content_reports')
+    .insert({
+      reporter_id: user.id,
+      target_user_id: input.targetUserId ?? null,
+      entity_type: input.entityType,
+      entity_id: input.entityId,
+      reason_category: input.reasonCategory,
+      details: input.details?.trim() || null,
+    })
+      .select('*')
+      .single()
+
+  if (error) {
+    if (error.code === '42P01') {
+      throw new Error('Reporting needs the latest Supabase migration before it can be used.')
+    }
+    throw error
+  }
+  return data as DbContentReport
+}
+
+export async function getOnboardingState(
+  supabase: Client
+): Promise<DbOnboardingState | null> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return null
+
+  const [{ count: booksCount }, { count: favoritesCount }, stats, { count: clubsCount }, { count: sessionsCount }, { count: reviewsCount }] =
+    await Promise.all([
+      supabase.from('user_books').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('favorite_books').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+      getProfileStats(supabase, user.id),
+      supabase.from('club_members').select('club_id', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('reading_sessions').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('reviews').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+    ])
+
+  return {
+    hasBooks: (booksCount ?? 0) > 0,
+    favoritesCount: favoritesCount ?? 0,
+    followingCount: stats.following_count ?? 0,
+    clubsCount: clubsCount ?? 0,
+    sessionsCount: sessionsCount ?? 0,
+    reviewsCount: reviewsCount ?? 0,
+  }
+}
+
 export async function searchBooks(
   supabase: Client,
   q: string,
@@ -636,13 +1045,15 @@ export async function searchProfiles(
 ): Promise<DbProfile[]> {
   const query = q.trim()
   if (!query) return []
+  const currentUser = await getCurrentUser(supabase)
   const like = `%${query.replace(/%/g, '\\%')}%`
   const { data } = await supabase
     .from('profiles')
     .select('*')
     .or(`username.ilike.${like},display_name.ilike.${like},bio.ilike.${like}`)
     .limit(limit)
-  return (data ?? []) as DbProfile[]
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return ((data ?? []) as DbProfile[]).filter((profile) => !hiddenUserIds.has(profile.id))
 }
 
 export async function searchClubsByName(
@@ -652,6 +1063,7 @@ export async function searchClubsByName(
 ): Promise<DbClub[]> {
   const query = q.trim()
   if (!query) return []
+  const currentUser = await getCurrentUser(supabase)
   const like = `%${query.replace(/%/g, '\\%')}%`
   const { data } = await supabase
     .from('clubs')
@@ -659,7 +1071,10 @@ export async function searchClubsByName(
     .eq('is_public', true)
     .or(`name.ilike.${like},description.ilike.${like}`)
     .limit(limit)
-  return (data ?? []).map(mapClub)
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return (data ?? [])
+    .map(mapClub)
+    .filter((club) => !hiddenUserIds.has(club.owner_id))
 }
 
 export async function searchBookPosts(
@@ -669,6 +1084,7 @@ export async function searchBookPosts(
 ): Promise<DbBookPost[]> {
   const query = q.trim()
   if (!query) return []
+  const currentUser = await getCurrentUser(supabase)
   const like = `%${query.replace(/%/g, '\\%')}%`
   const { data } = await supabase
     .from('book_posts')
@@ -678,11 +1094,12 @@ export async function searchBookPosts(
     .limit(limit)
 
   const mapped = (data ?? []).map((row: any) => ({
-    ...(row as DbBookPost),
-    book: row.book ? mapBookWithAuthors(row.book) : null,
-  }))
+      ...(row as DbBookPost),
+      book: row.book ? mapBookWithAuthors(row.book) : null,
+    }))
 
-  return hydrateBookPostCounts(supabase, mapped)
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return hydrateBookPostCounts(supabase, filterRowsByHiddenUsers(mapped, hiddenUserIds))
 }
 
 export async function getBook(supabase: Client, bookId: string): Promise<DbBookWithAuthors | null> {
@@ -985,7 +1402,7 @@ async function findOrCreateCatalogBook(
     title: input.title.trim(),
     subtitle: input.subtitle?.trim() || null,
     isbn: canonicalIsbn,
-    cover_url: input.coverUrl ?? null,
+    cover_url: input.coverUrl ?? resolveBookCoverUrl({ isbn: canonicalIsbn }) ?? null,
     description: input.description?.trim() || null,
     published_year: input.publishedYear ?? null,
     page_count: input.pageCount ?? null,
@@ -1093,6 +1510,7 @@ async function findOrCreateImportedBook(
     .insert({
       title: entry.title.trim(),
       isbn: canonicalIsbn,
+      cover_url: resolveBookCoverUrl({ isbn: canonicalIsbn }),
       page_count: entry.pageCount ?? null,
       published_year: entry.originalPublicationYear ?? entry.yearPublished ?? null,
     })
@@ -1341,7 +1759,7 @@ export async function upsertUserBook(
   if (!user) throw new Error('Not signed in')
 
   const existing = await getUserBook(supabase, user.id, input.bookId)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDateString()
   const payload: Record<string, unknown> = {
     user_id: user.id,
     book_id: input.bookId,
@@ -1390,8 +1808,10 @@ export async function upsertUserBook(
   }
 
   const goalYears = new Set<number>()
-  if (existing?.finished_at) goalYears.add(new Date(existing.finished_at).getFullYear())
-  if (row.finished_at) goalYears.add(new Date(row.finished_at).getFullYear())
+  const existingFinishedYear = yearFromDateOnly(existing?.finished_at)
+  const rowFinishedYear = yearFromDateOnly(row.finished_at)
+  if (existingFinishedYear !== null) goalYears.add(existingFinishedYear)
+  if (rowFinishedYear !== null) goalYears.add(rowFinishedYear)
   for (const year of goalYears) {
     await syncReadingGoalProgress(supabase, user.id, year)
   }
@@ -1458,7 +1878,8 @@ export async function importGoodreadsLibrary(
       const userBook = await upsertImportedUserBookRecord(supabase, user.id, book.id, entry)
       if (userBook) {
         updatedShelves += 1
-        if (userBook.finished_at) yearsToSync.add(new Date(userBook.finished_at).getFullYear())
+        const finishedYear = yearFromDateOnly(userBook.finished_at)
+        if (finishedYear !== null) yearsToSync.add(finishedYear)
       }
 
       if (includeReviews) {
@@ -1547,6 +1968,7 @@ export async function listReviewsForBook(
   bookId: string,
   limit = 20
 ): Promise<DbReview[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('reviews')
     .select(`*, profile:profiles!reviews_user_id_fkey ( * )`)
@@ -1554,7 +1976,8 @@ export async function listReviewsForBook(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  return (data ?? []) as DbReview[]
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return filterRowsByHiddenUsers((data ?? []) as DbReview[], hiddenUserIds)
 }
 
 export async function createReview(
@@ -1640,6 +2063,7 @@ export async function listBookPosts(
   bookId: string,
   limit = 20
 ): Promise<DbBookPost[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('book_posts')
     .select(`*, profile:profiles!book_posts_user_id_fkey ( * )`)
@@ -1647,7 +2071,11 @@ export async function listBookPosts(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  return hydrateBookPostCounts(supabase, (data ?? []) as DbBookPost[])
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return hydrateBookPostCounts(
+    supabase,
+    filterRowsByHiddenUsers((data ?? []) as DbBookPost[], hiddenUserIds)
+  )
 }
 
 export async function createBookPost(
@@ -1684,6 +2112,7 @@ export async function listRecentBookPosts(
   supabase: Client,
   limit = 30
 ): Promise<DbBookPost[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('book_posts')
     .select(`*, profile:profiles!book_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
@@ -1695,7 +2124,11 @@ export async function listRecentBookPosts(
     book: row.book ? mapBookWithAuthors(row.book) : null,
   }))
 
-  return hydrateBookPostCounts(supabase, mapped)
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return hydrateBookPostCounts(
+    supabase,
+    filterRowsByHiddenUsers(mapped, hiddenUserIds)
+  )
 }
 
 export async function listPostComments(
@@ -1703,6 +2136,7 @@ export async function listPostComments(
   postId: string,
   limit = 50
 ): Promise<DbBookPostComment[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('book_post_comments')
     .select(`*, profile:profiles!book_post_comments_user_id_fkey ( * )`)
@@ -1710,7 +2144,8 @@ export async function listPostComments(
     .order('created_at', { ascending: true })
     .limit(limit)
 
-  return (data ?? []) as DbBookPostComment[]
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return filterRowsByHiddenUsers((data ?? []) as DbBookPostComment[], hiddenUserIds)
 }
 
 export async function createComment(
@@ -1755,6 +2190,31 @@ export async function createComment(
       entityId: input.postId,
       message: `${actorName} commented on "${post.title}"`,
     })
+  }
+
+  if (input.parentId) {
+    const { data: parent } = await supabase
+      .from('book_post_comments')
+      .select('user_id')
+      .eq('id', input.parentId)
+      .maybeSingle()
+
+    if (parent?.user_id && parent.user_id !== post?.user_id) {
+      const actor = await supabase
+        .from('profiles')
+        .select('display_name, username')
+        .eq('id', user.id)
+        .maybeSingle()
+      const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+      await insertNotification(supabase, {
+        userId: parent.user_id,
+        actorId: user.id,
+        type: 'comment',
+        entityType: 'comment',
+        entityId: input.parentId,
+        message: `${actorName} replied to your comment`,
+      })
+    }
   }
 
   return data as DbBookPostComment
@@ -1855,6 +2315,7 @@ export async function listRecentActivity(
   supabase: Client,
   limit = 30
 ): Promise<DbActivityEvent[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('activity_events')
     .select(
@@ -1865,11 +2326,15 @@ export async function listRecentActivity(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  return (data ?? []).map((row: any) => ({
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+
+  return (data ?? [])
+    .map((row: any) => ({
     ...(row as DbActivityEvent),
     metadata: toJsonMap(row.metadata),
     book: row.book ? mapBookWithAuthors(row.book) : null,
-  }))
+    }))
+    .filter((row) => !hiddenUserIds.has(row.user_id))
 }
 
 export async function logReadingSession(
@@ -1885,27 +2350,57 @@ export async function logReadingSession(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
-  const sessionDate = input.date ?? new Date().toISOString().slice(0, 10)
-  const { data, error } = await supabase
+  const sessionDate = input.date ?? localDateString()
+  if (diffDateOnlyInDays(localDateString(), sessionDate) > 0) {
+    throw new Error('Reading sessions cannot be logged in the future')
+  }
+
+  if (!(input.pages ?? 0) && !(input.minutes ?? 0)) {
+    throw new Error('Add pages or minutes to log a reading session')
+  }
+
+  let existingQuery = supabase
     .from('reading_sessions')
-    .upsert(
-      {
-        user_id: user.id,
-        book_id: input.bookId ?? null,
-        pages_read: input.pages ?? null,
-        minutes_read: input.minutes ?? null,
-        notes: input.notes ?? null,
-        session_date: sessionDate,
-      },
-      { onConflict: 'user_id,session_date,book_id' }
-    )
     .select('*')
-    .single()
+    .eq('user_id', user.id)
+    .eq('session_date', sessionDate)
+
+  existingQuery = input.bookId
+    ? existingQuery.eq('book_id', input.bookId)
+    : existingQuery.is('book_id', null)
+
+  const { data: existing } = await existingQuery.maybeSingle()
+
+  const mergedNotes = [existing?.notes, input.notes?.trim()]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join('\n\n')
+
+  const payload = {
+    user_id: user.id,
+    book_id: input.bookId ?? null,
+    pages_read: (existing?.pages_read ?? 0) + (input.pages ?? 0) || null,
+    minutes_read: (existing?.minutes_read ?? 0) + (input.minutes ?? 0) || null,
+    notes: mergedNotes || null,
+    session_date: sessionDate,
+  }
+
+  const { data, error } = existing
+    ? await supabase
+        .from('reading_sessions')
+        .update(payload)
+        .eq('id', existing.id)
+        .select('*')
+        .single()
+    : await supabase.from('reading_sessions').insert(payload).select('*').single()
 
   if (error) throw error
 
   await touchStreak(supabase, user.id)
-  await syncReadingGoalProgress(supabase, user.id, new Date(sessionDate).getFullYear())
+  const goalYear = yearFromDateOnly(sessionDate)
+  if (goalYear !== null) {
+    await syncReadingGoalProgress(supabase, user.id, goalYear)
+  }
   await insertActivityEvent(supabase, {
     userId: user.id,
     eventType: 'book_logged',
@@ -1930,62 +2425,49 @@ export async function listRecentSessions(
 
   const { data } = await supabase
     .from('reading_sessions')
-    .select('*')
+    .select(`*, book:books ( ${BOOK_SELECT} )`)
     .eq('user_id', userId)
-    .gte('session_date', since.toISOString().slice(0, 10))
+    .gte('session_date', localDateString(since))
     .order('session_date', { ascending: false })
 
-  return (data ?? []) as DbReadingSession[]
+  return (data ?? []).map((row: any) => ({
+    ...(row as DbReadingSession),
+    book: row.book ? mapBookWithAuthors(row.book) : null,
+  }))
 }
 
 export async function getStreak(
   supabase: Client,
   userId: string
 ): Promise<{ current_streak: number; longest_streak: number; last_activity_date: string | null }> {
-  const { data } = await supabase
-    .from('streaks')
-    .select('current_streak, longest_streak, last_activity_date')
-    .eq('user_id', userId)
-    .maybeSingle()
-
-  return (
-    (data as { current_streak: number; longest_streak: number; last_activity_date: string | null }) ?? {
-      current_streak: 0,
-      longest_streak: 0,
-      last_activity_date: null,
-    }
-  )
+  return touchStreak(supabase, userId)
 }
 
-async function touchStreak(supabase: Client, userId: string) {
-  const today = new Date().toISOString().slice(0, 10)
-  const { data: existing } = await supabase
-    .from('streaks')
-    .select('current_streak, longest_streak, last_activity_date')
+async function touchStreak(
+  supabase: Client,
+  userId: string
+): Promise<{ current_streak: number; longest_streak: number; last_activity_date: string | null }> {
+  const { data: sessions } = await supabase
+    .from('reading_sessions')
+    .select('session_date')
     .eq('user_id', userId)
-    .maybeSingle()
+    .order('session_date', { ascending: true })
 
-  let current = 1
-  let longest = 1
-
-  if (existing) {
-    const last = existing.last_activity_date as string | null
-    if (last === today) return
-
-    const yesterday = new Date()
-    yesterday.setDate(yesterday.getDate() - 1)
-    const y = yesterday.toISOString().slice(0, 10)
-    current = last === y ? (existing.current_streak ?? 0) + 1 : 1
-    longest = Math.max(existing.longest_streak ?? 0, current)
-  }
+  const snapshot = computeStreakSnapshot(
+    ((sessions ?? []) as Array<{ session_date: string | null }>)
+      .map((row) => row.session_date ?? '')
+      .filter(Boolean)
+  )
 
   await supabase.from('streaks').upsert({
     user_id: userId,
-    current_streak: current,
-    longest_streak: longest,
-    last_activity_date: today,
+    current_streak: snapshot.current_streak,
+    longest_streak: snapshot.longest_streak,
+    last_activity_date: snapshot.last_activity_date,
     updated_at: new Date().toISOString(),
   })
+
+  return snapshot
 }
 
 export async function getReadingGoal(
@@ -2089,20 +2571,15 @@ export async function listNotifications(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  return (data ?? []) as DbNotification[]
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, user.id)
+  return ((data ?? []) as DbNotification[]).filter(
+    (notification) => !notification.actor_id || !hiddenUserIds.has(notification.actor_id)
+  )
 }
 
 export async function unreadNotificationCount(supabase: Client): Promise<number> {
-  const user = await getCurrentUser(supabase)
-  if (!user) return 0
-
-  const { count } = await supabase
-    .from('notifications')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', user.id)
-    .eq('is_read', false)
-
-  return count ?? 0
+  const notifications = await listNotifications(supabase, 100)
+  return notifications.filter((notification) => !notification.is_read).length
 }
 
 export async function markNotificationsRead(supabase: Client, ids?: string[]) {
@@ -2117,6 +2594,15 @@ export async function markNotificationsRead(supabase: Client, ids?: string[]) {
 export async function toggleFollow(supabase: Client, targetUserId: string): Promise<boolean> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
+  if (user.id === targetUserId) throw new Error('You cannot follow yourself')
+
+  const blockState = await getBlockStateForUsers(supabase, user.id, targetUserId)
+  if (blockState.blockedByMe) {
+    throw new Error('Unblock this reader before following them')
+  }
+  if (blockState.blockedMe) {
+    throw new Error('This reader has blocked you')
+  }
 
   const { data: existing } = await supabase
     .from('follows')
@@ -2440,10 +2926,12 @@ export async function listClubs(supabase: Client, limit = 20): Promise<DbClub[]>
     .limit(limit)
 
   const mapped = (data ?? []).map(mapClub)
-  const ids = mapped.map((club) => club.id)
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  const visibleClubs = mapped.filter((club) => !hiddenUserIds.has(club.owner_id))
+  const ids = visibleClubs.map((club) => club.id)
   const { countMap, membershipSet } = await getClubCounts(supabase, ids, currentUser?.id)
 
-  return mapped.map((club) => ({
+  return visibleClubs.map((club) => ({
     ...club,
     member_count: countMap.get(club.id) ?? 0,
     is_member: membershipSet.has(club.id) || club.owner_id === currentUser?.id,
@@ -2459,6 +2947,9 @@ export async function getClub(supabase: Client, clubId: string): Promise<DbClub 
     .maybeSingle()
 
   if (!data) return null
+
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  if (hiddenUserIds.has(data.owner_id)) return null
 
   const { countMap, membershipSet } = await getClubCounts(supabase, [clubId], currentUser?.id)
   return {
@@ -2567,6 +3058,7 @@ export async function listClubPosts(
   clubId: string,
   limit = 30
 ): Promise<DbClubPost[]> {
+  const currentUser = await getCurrentUser(supabase)
   const { data } = await supabase
     .from('club_posts')
     .select(`*, profile:profiles!club_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
@@ -2575,7 +3067,10 @@ export async function listClubPosts(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  return (data ?? []).map(mapClubPost)
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  return (data ?? [])
+    .map(mapClubPost)
+    .filter((post) => !hiddenUserIds.has(post.user_id))
 }
 
 export async function postToClub(
@@ -2735,7 +3230,7 @@ export function toUiBook(
     id: book.id,
     title: book.title,
     author: book.authors.map((author) => author.name).join(', ') || 'Unknown',
-    cover: book.cover_url ?? '',
+    cover: resolveBookCoverUrl(book) ?? '',
     rating: stats?.avg_rating ?? 0,
     ratings: stats?.rating_count ?? 0,
     mood: [] as string[],
