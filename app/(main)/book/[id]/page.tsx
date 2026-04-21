@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
-import { Spoiler, VoteBar } from '@/components/redesign/primitives'
+import { Spoiler } from '@/components/redesign/primitives'
+import { LikeButton } from '@/components/redesign/LikeButton'
 import { createClient } from '@/lib/supabase/client'
+import { shareUrl } from '@/lib/share'
 import {
   addTag,
   awardProgressBadges,
@@ -19,6 +21,7 @@ import {
   getUserBook,
   listBookPosts,
   listBookTags,
+  listLikedReviewIds,
   listPostComments,
   listReviewsForBook,
   listSavedReviewIds,
@@ -52,6 +55,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [threads, setThreads] = useState<DbBookPost[]>([])
   const [tags, setTags] = useState<DbTag[]>([])
   const [savedReviewIds, setSavedReviewIds] = useState<string[]>([])
+  const [likedReviewIds, setLikedReviewIds] = useState<string[]>([])
   const [commentsByPost, setCommentsByPost] = useState<CommentMap>({})
   const [commentDrafts, setCommentDrafts] = useState<DraftMap>({})
   const [openComments, setOpenComments] = useState<ToggleMap>({})
@@ -99,16 +103,19 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       setTags(tagRows)
 
       if (profile) {
-        const [userBookRow, savedIds] = await Promise.all([
+        const [userBookRow, savedIds, likedIds] = await Promise.all([
           getUserBook(supabase, profile.id, id),
           listSavedReviewIds(supabase, reviewRows.map((review) => review.id)),
+          listLikedReviewIds(supabase, reviewRows.map((review) => review.id)),
         ])
         if (cancelled) return
         setUserBook(userBookRow)
         setSavedReviewIds(savedIds)
+        setLikedReviewIds(likedIds)
       } else {
         setUserBook(null)
         setSavedReviewIds([])
+        setLikedReviewIds([])
       }
 
       if (!cancelled) setLoading(false)
@@ -137,7 +144,13 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     const rows = await listReviewsForBook(supabase, id)
     setReviews(rows)
     if (me) {
-      setSavedReviewIds(await listSavedReviewIds(supabase, rows.map((review) => review.id)))
+      const ids = rows.map((review) => review.id)
+      const [saved, liked] = await Promise.all([
+        listSavedReviewIds(supabase, ids),
+        listLikedReviewIds(supabase, ids),
+      ])
+      setSavedReviewIds(saved)
+      setLikedReviewIds(liked)
     }
   }
 
@@ -276,6 +289,20 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               onClick={() => setShowLog(true)}
             >
               Log a reading session
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+              onClick={async () => {
+                const r = await shareUrl({
+                  title: book.title,
+                  text: `${book.title}${authorLine ? ' — ' + authorLine : ''}`,
+                  path: `/book/${id}`,
+                })
+                flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+              }}
+            >
+              <Icon name="share" size={13} /> Share this book
             </button>
           </div>
 
@@ -558,6 +585,19 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                       >
                         <Icon name="message" size={13} /> Comments {thread.comment_count ?? comments.length}
                       </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ marginLeft: 'auto' }}
+                        onClick={async () => {
+                          const r = await shareUrl({
+                            title: thread.title,
+                            path: `/book/${id}#thread-${thread.id}`,
+                          })
+                          flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+                        }}
+                      >
+                        <Icon name="share" size={13} /> Share
+                      </button>
                     </div>
 
                     {commentsOpen && (
@@ -660,7 +700,11 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                       )}
                     </p>
                     <div style={{ display: 'flex', gap: 6, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', alignItems: 'center' }}>
-                      <VoteBar initialScore={review.liked_count} />
+                      <LikeButton
+                        reviewId={review.id}
+                        initialCount={review.liked_count}
+                        initialLiked={likedReviewIds.includes(review.id)}
+                      />
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={async () => {
@@ -672,7 +716,17 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                       >
                         <Icon name="bookmark" size={13} /> {saved ? 'Saved' : 'Save'}
                       </button>
-                      <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ marginLeft: 'auto' }}
+                        onClick={async () => {
+                          const r = await shareUrl({
+                            title: `${user.name}'s review of ${book.title}`,
+                            path: `/book/${id}#review-${review.id}`,
+                          })
+                          flash(r === 'copied' ? 'Link copied' : r === 'shared' ? 'Shared' : 'Could not share')
+                        }}
+                      >
                         <Icon name="share" size={13} /> Share
                       </button>
                     </div>

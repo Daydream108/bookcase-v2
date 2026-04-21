@@ -344,6 +344,31 @@ async function insertActivityEvent(
   }
 }
 
+async function insertNotification(
+  supabase: Client,
+  input: {
+    userId: string
+    actorId: string
+    type: 'follow' | 'like' | 'comment' | 'review_on_book' | 'list_mention' | 'club_invite' | 'roadmap_status' | 'upvote'
+    entityType?: 'review' | 'book_post' | 'list' | 'club' | 'roadmap_feature' | 'comment' | null
+    entityId?: string | null
+    message: string
+  }
+) {
+  if (input.userId === input.actorId) return
+  const { error } = await supabase.from('notifications').insert({
+    user_id: input.userId,
+    actor_id: input.actorId,
+    type: input.type,
+    entity_type: input.entityType ?? null,
+    entity_id: input.entityId ?? null,
+    message: input.message,
+  })
+  if (error && process.env.NODE_ENV !== 'production') {
+    console.warn('notifications insert failed:', error.message)
+  }
+}
+
 async function syncReadingGoalProgress(
   supabase: Client,
   userId: string,
@@ -502,8 +527,63 @@ export async function searchBooks(
   }
 
   const like = `%${query.replace(/%/g, '\\%')}%`
-  const { data } = await supabase.from('books').select(BOOK_SELECT).ilike('title', like).limit(limit)
-  return (data ?? []).map(mapBookWithAuthors)
+
+  const [titleMatches, authorMatches] = await Promise.all([
+    supabase.from('books').select(BOOK_SELECT).ilike('title', like).limit(limit),
+    supabase
+      .from('authors')
+      .select('id, book_authors ( book:books ( ' + BOOK_SELECT + ' ) )')
+      .ilike('name', like)
+      .limit(10),
+  ])
+
+  const byId = new Map<string, DbBookWithAuthors>()
+  for (const row of titleMatches.data ?? []) {
+    const mapped = mapBookWithAuthors(row)
+    byId.set(mapped.id, mapped)
+  }
+  for (const author of (authorMatches.data ?? []) as any[]) {
+    for (const ba of author.book_authors ?? []) {
+      if (ba.book && !byId.has(ba.book.id)) {
+        byId.set(ba.book.id, mapBookWithAuthors(ba.book))
+      }
+    }
+  }
+
+  return [...byId.values()].slice(0, limit)
+}
+
+export async function searchProfiles(
+  supabase: Client,
+  q: string,
+  limit = 12
+): Promise<DbProfile[]> {
+  const query = q.trim()
+  if (!query) return []
+  const like = `%${query.replace(/%/g, '\\%')}%`
+  const { data } = await supabase
+    .from('profiles')
+    .select('*')
+    .or(`username.ilike.${like},display_name.ilike.${like}`)
+    .limit(limit)
+  return (data ?? []) as DbProfile[]
+}
+
+export async function searchClubsByName(
+  supabase: Client,
+  q: string,
+  limit = 12
+): Promise<DbClub[]> {
+  const query = q.trim()
+  if (!query) return []
+  const like = `%${query.replace(/%/g, '\\%')}%`
+  const { data } = await supabase
+    .from('clubs')
+    .select(`*, current_book:books ( ${BOOK_SELECT} )`)
+    .eq('is_public', true)
+    .ilike('name', like)
+    .limit(limit)
+  return (data ?? []).map(mapClub)
 }
 
 export async function getBook(supabase: Client, bookId: string): Promise<DbBookWithAuthors | null> {
@@ -932,6 +1012,25 @@ export async function createComment(
     .single()
 
   if (error) throw error
+
+  const { data: post } = await supabase
+    .from('book_posts')
+    .select('user_id, title')
+    .eq('id', input.postId)
+    .maybeSingle()
+  if (post?.user_id) {
+    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
+    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+    await insertNotification(supabase, {
+      userId: post.user_id,
+      actorId: user.id,
+      type: 'comment',
+      entityType: 'book_post',
+      entityId: input.postId,
+      message: `${actorName} commented on "${post.title}"`,
+    })
+  }
+
   return data as DbBookPostComment
 }
 
@@ -975,6 +1074,25 @@ export async function togglePostUpvote(
   })
 
   if (error) throw error
+
+  const { data: post } = await supabase
+    .from('book_posts')
+    .select('user_id, title')
+    .eq('id', postId)
+    .maybeSingle()
+  if (post?.user_id) {
+    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
+    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+    await insertNotification(supabase, {
+      userId: post.user_id,
+      actorId: user.id,
+      type: 'upvote',
+      entityType: 'book_post',
+      entityId: postId,
+      message: `${actorName} upvoted "${post.title}"`,
+    })
+  }
+
   return true
 }
 
@@ -1281,7 +1399,30 @@ export async function toggleFollow(supabase: Client, targetUserId: string): Prom
     },
   })
 
+  const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
+  const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+  await insertNotification(supabase, {
+    userId: targetUserId,
+    actorId: user.id,
+    type: 'follow',
+    message: `${actorName} started following you`,
+  })
+
   return true
+}
+
+export async function listLikedReviewIds(
+  supabase: Client,
+  reviewIds: string[]
+): Promise<string[]> {
+  const user = await getCurrentUser(supabase)
+  if (!user || !reviewIds.length) return []
+  const { data } = await supabase
+    .from('likes')
+    .select('review_id')
+    .eq('user_id', user.id)
+    .in('review_id', reviewIds)
+  return (data ?? []).map((row: any) => row.review_id).filter(Boolean)
 }
 
 export async function toggleLike(supabase: Client, reviewId: string): Promise<boolean> {
@@ -1304,6 +1445,25 @@ export async function toggleLike(supabase: Client, reviewId: string): Promise<bo
     user_id: user.id,
     review_id: reviewId,
   })
+
+  const { data: review } = await supabase
+    .from('reviews')
+    .select('user_id, book:books ( title )')
+    .eq('id', reviewId)
+    .maybeSingle()
+  if (review?.user_id) {
+    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
+    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+    const bookTitle = (review as any).book?.title ?? 'a book'
+    await insertNotification(supabase, {
+      userId: review.user_id,
+      actorId: user.id,
+      type: 'like',
+      entityType: 'review',
+      entityId: reviewId,
+      message: `${actorName} liked your review of ${bookTitle}`,
+    })
+  }
 
   return true
 }
@@ -1576,6 +1736,24 @@ export async function joinClub(supabase: Client, clubId: string) {
   )
 
   if (error) throw error
+
+  const { data: club } = await supabase
+    .from('clubs')
+    .select('owner_id, name')
+    .eq('id', clubId)
+    .maybeSingle()
+  if (club?.owner_id) {
+    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
+    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+    await insertNotification(supabase, {
+      userId: club.owner_id,
+      actorId: user.id,
+      type: 'club_invite',
+      entityType: 'club',
+      entityId: clubId,
+      message: `${actorName} joined ${club.name}`,
+    })
+  }
 }
 
 export async function leaveClub(supabase: Client, clubId: string) {
