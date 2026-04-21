@@ -4,7 +4,7 @@ This is the single source of truth for project status and the next must-have que
 
 ## Current Status
 
-Most of the Supabase wiring is live. The redesign, mobile layout, auth, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, and broader-catalog search/import all read or write through `lib/db.ts`.
+Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, and broader-catalog search/import all read or write through `lib/db.ts`.
 
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
@@ -18,18 +18,11 @@ Latest completed pushes:
 - Nested comment replies with a 2-level depth cap on the book page.
 - Direct bookcase add/remove from the visible `+` slots on profile shelves.
 - Search now reaches beyond the local Supabase catalog. `app/api/catalog/search/route.ts` queries Open Library through `lib/openlibrary.ts`, the search page shows broader-catalog matches, and `importCatalogBook` in `lib/db.ts` lets users import a missing result straight into Bookcase.
+- Password recovery and email confirmation recovery are now live. Login links to `/forgot-password`, signup can resend confirmation emails, `/auth/callback` finishes Supabase email redirects, `/auth/confirm` forwards token-hash links into that flow, and `/reset-password` updates the user's password in-app.
 
 ## Must-Have Queue
 
-### 1. Password reset and email-recovery flow
-- Add "Forgot password?" on login.
-- Add reset-password token handling and reset UI.
-- Add resend-confirmation support after signup.
-
-Why this matters:
-- Users can currently get stranded after signup or lockout.
-
-### 2. Moderation, reporting, and blocking
+### 1. Moderation, reporting, and blocking
 - Add report actions for reviews, threads, comments, and clubs.
 - Add block-user UX and enforce it in feeds, notifications, and profiles.
 - Add real storage/workflow behind reports.
@@ -37,21 +30,21 @@ Why this matters:
 Why this matters:
 - This is a public social app. Safety cannot stay implicit.
 
-### 3. Notification settings that actually work
+### 2. Notification settings that actually work
 - The settings toggles cannot remain local-only if they stay visible.
 - Either store server-side notification prefs and honor them at write time, or hide the toggles until they are real.
 
 Why this matters:
 - Fake settings break trust.
 
-### 4. Better onboarding after signup/import
+### 3. Better onboarding after signup/import
 - After Goodreads import or skip, guide the user into favorites, follows, clubs, ratings, and first reading session.
 - Add useful empty states on `/home`.
 
 Why this matters:
 - Signup now reaches import, but the first-session path is still incomplete.
 
-### 5. Streak and reading tracker reliability
+### 4. Streak and reading tracker reliability
 - The streak needs to update correctly when a user logs reading and it needs to stay accurate across refreshes, same-day logs, and day changes.
 - The reading tracker flow needs to reliably save session data, show it back to the user, and keep profile and goal surfaces in sync.
 - Re-check the edge cases around duplicate same-day sessions, timezone boundaries, and how imported history should or should not affect the live streak.
@@ -60,7 +53,7 @@ Why this matters:
 - Streaks and tracking are core habit loops in the product, so if they feel inconsistent the app loses trust fast.
 - Users need to believe that logging reading actually counts.
 
-### 6. Book catalog quality
+### 5. Book catalog quality
 - Backfill or fetch missing `cover_url` values.
 - Prefer ISBN-driven enrichment.
 - Clean up duplicate editions as add-a-book lands.
@@ -85,6 +78,8 @@ Nothing has been verified end-to-end on the live Cloudflare Worker since the lat
 Suggested path:
 - Sign up
 - Goodreads import
+- Confirm the signup email and make sure it lands in `/import`
+- Request a password reset email and finish the `/reset-password` flow
 - Search by title, author, username, and club
 - Import a broader-catalog result that was not already in Supabase
 - Rate a book with a half-star value
@@ -114,12 +109,15 @@ Suggested path:
 ## File Map
 
 - `lib/db.ts`: Supabase queries, types, adapters, Goodreads bulk import helpers, notifications helper, `setPostVote`, `listPostVotes`, `removeUserBook`, and `importCatalogBook`
+- `lib/auth-redirect.ts`: shared auth callback URL builder and safe local redirect sanitizer
 - `lib/goodreads.ts`: Goodreads CSV parser and preview helpers
 - `lib/openlibrary.ts`: Open Library search normalization and cover helpers
 - `lib/share.ts`: Web Share API wrapper with clipboard fallback
 - `lib/supabase/client.ts` and `lib/supabase/server.ts`: browser/server Supabase factories
 - `lib/supabase/config.ts`: repo-safe public Supabase config
 - `app/error.tsx` and `app/not-found.tsx`: app-level error and 404 boundaries
+- `app/(auth)/forgot-password/page.tsx`, `app/(auth)/reset-password/page.tsx`, and `app/(auth)/auth/callback/page.tsx`: password reset request, password update, and Supabase email redirect handling
+- `app/auth/confirm/route.ts`: compatibility redirect for token-hash email links
 - `app/api/catalog/search/route.ts`: broader-catalog search proxy
 - `app/(main)/import/page.tsx`: Goodreads onboarding/import UI
 - `app/(main)/profile/[username]/page.tsx`: profile page with bookcase and inline picker modal for add/remove
@@ -143,6 +141,7 @@ Suggested path:
 - `roadmap_features.has_voted` is hydrated per request from `roadmap_votes`; it is not stored.
 - Async page params in Next 15 should use `use()` in client components or `await params` in server components.
 - `notifications` RLS requires `auth.uid() = actor_id`, so client-created notifications must use the current user as actor.
+- Supabase Auth needs the app origin and `/auth/callback` on the redirect allow list or confirmation/reset emails will bounce before the app can finish the flow.
 - The bookcase row 2 and row 3 shelf choice is still stored in `localStorage` under `bookcase-layout:{profileId}` and is not synced across devices yet.
 
 ## Commit Style

@@ -2,40 +2,78 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { buildAuthCallbackUrl } from '@/lib/auth-redirect'
 import { createClient } from '@/lib/supabase/client'
 
 export default function SignupPage() {
   const router = useRouter()
+  const supabase = useMemo(() => createClient(), [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [resending, setResending] = useState(false)
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setMessage(null)
     setLoading(true)
-    const supabase = createClient()
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { display_name: name } },
+      options: {
+        data: { display_name: name },
+        emailRedirectTo: buildAuthCallbackUrl('/import?source=signup'),
+      },
     })
+
     setLoading(false)
+
     if (signUpError) {
       setError(signUpError.message)
       return
     }
+
     if (data.session) {
       router.push('/import?source=signup')
       router.refresh()
       return
     }
-    setMessage('Check your email for a confirmation link.')
+
+    setMessage('Check your email for a confirmation link. If it does not show up, you can resend it below.')
+  }
+
+  const onResend = async () => {
+    if (!email) {
+      setError('Enter your email first so we know where to resend the confirmation.')
+      return
+    }
+
+    setError(null)
+    setMessage(null)
+    setResending(true)
+
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo: buildAuthCallbackUrl('/import?source=signup'),
+      },
+    })
+
+    setResending(false)
+
+    if (resendError) {
+      setError(resendError.message)
+      return
+    }
+
+    setMessage('A fresh confirmation email is on the way.')
   }
 
   return (
@@ -97,14 +135,23 @@ export default function SignupPage() {
         )}
 
         <button type="submit" disabled={loading} className="btn btn-pulp" style={{ justifyContent: 'center', marginTop: 6 }}>
-          {loading ? 'Creating…' : 'Create account'}
+          {loading ? 'Creating...' : 'Create account'}
+        </button>
+        <button
+          type="button"
+          disabled={resending || !email}
+          className="btn"
+          onClick={onResend}
+          style={{ justifyContent: 'center' }}
+        >
+          {resending ? 'Resending...' : 'Resend confirmation email'}
         </button>
       </form>
 
       <div style={{ marginTop: 20, fontSize: 13, color: 'var(--ink-3)' }}>
         Already have one?{' '}
         <Link href="/login" className="link-u" style={{ color: 'var(--pulp)', fontWeight: 600 }}>
-          Sign in →
+          Sign in -&gt;
         </Link>
       </div>
     </div>
