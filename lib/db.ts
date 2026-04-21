@@ -223,6 +223,18 @@ type ImportedListRecord = {
   title: string
 }
 
+export type CatalogBookImportInput = {
+  title: string
+  subtitle?: string | null
+  authors: string[]
+  isbns?: string[]
+  coverUrl?: string | null
+  description?: string | null
+  publishedYear?: number | null
+  pageCount?: number | null
+  languageCode?: string | null
+}
+
 const BOOK_SELECT = `
   id, title, subtitle, cover_url, description, published_year, page_count, isbn,
   book_authors ( authors ( id, name ) ),
@@ -821,6 +833,78 @@ function cacheImportedBook(
   for (const isbn of isbnCandidates) cache.set(`isbn:${isbn}`, book)
 }
 
+function buildBookTitleAuthorKey(title: string, authors: string[]) {
+  return `title:${normalizeLookupValue(title)}|authors:${authors
+    .map(normalizeLookupValue)
+    .sort()
+    .join('|')}`
+}
+
+function pickPreferredCatalogIsbn(isbns: string[]) {
+  return (
+    isbns.find((isbn) => isbn.length === 13) ??
+    isbns.find((isbn) => isbn.length === 10) ??
+    isbns[0] ??
+    null
+  )
+}
+
+async function findCatalogBook(
+  supabase: Client,
+  input: CatalogBookImportInput,
+  cache: Map<string, DbBookWithAuthors>
+) {
+  const isbnCandidates = (input.isbns ?? [])
+    .map((isbn) => normalizeImportedIsbn(isbn))
+    .filter(Boolean) as string[]
+
+  for (const isbn of isbnCandidates) {
+    const cached = cache.get(`isbn:${isbn}`)
+    if (cached) return cached
+
+    const { data } = await supabase.from('books').select(BOOK_SELECT).eq('isbn', isbn).maybeSingle()
+    if (data) {
+      const book = mapBookWithAuthors(data)
+      cacheImportedBook(cache, book, buildBookTitleAuthorKey(input.title, input.authors), isbnCandidates)
+      return book
+    }
+  }
+
+  const titleKey = buildBookTitleAuthorKey(input.title, input.authors)
+  const cached = cache.get(titleKey)
+  if (cached) return cached
+
+  const authorKeys = new Set(input.authors.map(normalizeLookupValue))
+  const normalizedTitle = normalizeLookupValue(input.title)
+  const fallbackTitle = `%${escapeLikePattern(input.title.trim())}%`
+  const { data } = await supabase
+    .from('books')
+    .select(BOOK_SELECT)
+    .ilike('title', fallbackTitle)
+    .limit(12)
+
+  const candidates = (data ?? []).map(mapBookWithAuthors)
+  const match =
+    candidates.find((book) => {
+      if (normalizeLookupValue(book.title) !== normalizedTitle) return false
+      if (!authorKeys.size) return true
+      return book.authors.some((author) => authorKeys.has(normalizeLookupValue(author.name)))
+    }) ??
+    candidates.find((book) => {
+      if (!authorKeys.size) return normalizeLookupValue(book.title) === normalizedTitle
+      const bookTitle = normalizeLookupValue(book.title)
+      const titleClose = bookTitle.includes(normalizedTitle) || normalizedTitle.includes(bookTitle)
+      return titleClose && book.authors.some((author) => authorKeys.has(normalizeLookupValue(author.name)))
+    })
+
+  if (match) {
+    cacheImportedBook(cache, match, titleKey, isbnCandidates)
+    return match
+  }
+
+  return null
+}
+
 async function findImportedBook(
   supabase: Client,
   entry: GoodreadsImportEntry,
@@ -878,6 +962,72 @@ async function findImportedBook(
   }
 
   return null
+}
+
+async function findOrCreateCatalogBook(
+  supabase: Client,
+  input: CatalogBookImportInput,
+  bookCache: Map<string, DbBookWithAuthors>,
+  authorCache: Map<string, string>
+) {
+  const existing = await findCatalogBook(supabase, input, bookCache)
+  if (existing) return { book: existing, created: false }
+
+  const normalizedIsbns = (input.isbns ?? [])
+    .map((isbn) => normalizeImportedIsbn(isbn))
+    .filter(Boolean) as string[]
+  const authorIds = input.authors.length
+    ? await findOrCreateImportedAuthors(supabase, input.authors, authorCache)
+    : []
+  const canonicalIsbn = pickPreferredCatalogIsbn(normalizedIsbns)
+
+  const payload: Record<string, unknown> = {
+    title: input.title.trim(),
+    subtitle: input.subtitle?.trim() || null,
+    isbn: canonicalIsbn,
+    cover_url: input.coverUrl ?? null,
+    description: input.description?.trim() || null,
+    published_year: input.publishedYear ?? null,
+    page_count: input.pageCount ?? null,
+  }
+
+  if (input.languageCode?.trim()) payload.language = input.languageCode.trim()
+
+  const { data: inserted, error } = await supabase
+    .from('books')
+    .insert(payload)
+    .select('id, title, subtitle, cover_url, description, published_year, page_count, isbn')
+    .single()
+
+  if (error) {
+    const retry = await findCatalogBook(supabase, input, bookCache)
+    if (retry) return { book: retry, created: false }
+    throw error
+  }
+
+  if (authorIds.length) {
+    const { error: linkError } = await supabase.from('book_authors').upsert(
+      authorIds.map((authorId) => ({
+        book_id: inserted.id,
+        author_id: authorId,
+      })),
+      { onConflict: 'book_id,author_id' }
+    )
+
+    if (linkError) throw linkError
+  }
+
+  const { data: hydrated, error: hydrateError } = await supabase
+    .from('books')
+    .select(BOOK_SELECT)
+    .eq('id', inserted.id)
+    .single()
+
+  if (hydrateError) throw hydrateError
+
+  const book = mapBookWithAuthors(hydrated)
+  cacheImportedBook(bookCache, book, buildBookTitleAuthorKey(input.title, input.authors), normalizedIsbns)
+  return { book, created: true }
 }
 
 async function findOrCreateImportedAuthors(
@@ -1039,6 +1189,35 @@ async function upsertImportedUserBookRecord(
 
   if (error) throw error
   return data as DbUserBook
+}
+
+export async function importCatalogBook(
+  supabase: Client,
+  input: CatalogBookImportInput
+): Promise<{ book: DbBookWithAuthors; created: boolean }> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Sign in to import books')
+
+  const title = input.title.trim()
+  if (!title) throw new Error('Missing book title')
+
+  const authorNames = Array.from(
+    new Set(input.authors.map((author) => author.trim()).filter(Boolean))
+  )
+
+  const bookCache = new Map<string, DbBookWithAuthors>()
+  const authorCache = new Map<string, string>()
+
+  return findOrCreateCatalogBook(
+    supabase,
+    {
+      ...input,
+      title,
+      authors: authorNames,
+    },
+    bookCache,
+    authorCache
+  )
 }
 
 async function upsertImportedReviewRecord(

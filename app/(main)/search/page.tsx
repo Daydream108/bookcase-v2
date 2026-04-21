@@ -1,12 +1,14 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { createClient } from '@/lib/supabase/client'
 import {
+  importCatalogBook,
   searchBooks,
   searchBookPosts,
   searchClubsByName,
@@ -20,40 +22,56 @@ import {
   type DbProfile,
   type DbTag,
 } from '@/lib/db'
+import type { OpenLibrarySearchResult } from '@/lib/openlibrary'
 
 type Tab = 'all' | 'books' | 'tags' | 'readers' | 'clubs' | 'threads'
 
 export default function SearchPage() {
+  const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [q, setQ] = useState('')
   const [tab, setTab] = useState<Tab>('all')
   const [books, setBooks] = useState<DbBookWithAuthors[]>([])
+  const [broaderBooks, setBroaderBooks] = useState<OpenLibrarySearchResult[]>([])
   const [tags, setTags] = useState<DbTag[]>([])
   const [readers, setReaders] = useState<DbProfile[]>([])
   const [clubs, setClubs] = useState<DbClub[]>([])
   const [threads, setThreads] = useState<DbBookPost[]>([])
+  const [importingId, setImportingId] = useState<string | null>(null)
+  const [notice, setNotice] = useState('')
+  const [broaderSearchError, setBroaderSearchError] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setNotice('')
+    setBroaderSearchError('')
 
     const timeout = setTimeout(async () => {
-      const [bookRows, tagRows, readerRows, clubRows, threadRows] = await Promise.all([
-        searchBooks(supabase, q, 24),
-        q ? searchTags(supabase, q, 12) : Promise.resolve([]),
-        q ? searchProfiles(supabase, q, 12) : Promise.resolve([]),
-        q ? searchClubsByName(supabase, q, 12) : Promise.resolve([]),
-        q ? searchBookPosts(supabase, q, 10) : Promise.resolve([]),
-      ])
+      try {
+        const [bookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await Promise.all([
+          searchBooks(supabase, q, 24),
+          q ? searchTags(supabase, q, 12) : Promise.resolve([]),
+          q ? searchProfiles(supabase, q, 12) : Promise.resolve([]),
+          q ? searchClubsByName(supabase, q, 12) : Promise.resolve([]),
+          q ? searchBookPosts(supabase, q, 10) : Promise.resolve([]),
+          q ? fetchBroaderCatalog(q, 12) : Promise.resolve([]),
+        ])
 
-      if (cancelled) return
-      setBooks(bookRows)
-      setTags(tagRows)
-      setReaders(readerRows)
-      setClubs(clubRows)
-      setThreads(threadRows)
-      setLoading(false)
+        if (cancelled) return
+        setBooks(bookRows)
+        setTags(tagRows)
+        setReaders(readerRows)
+        setClubs(clubRows)
+        setThreads(threadRows)
+        setBroaderBooks(filterBroaderCatalogResults(externalRows, bookRows))
+      } catch (error) {
+        if (cancelled) return
+        setBroaderSearchError((error as Error).message || 'Could not search the wider catalog right now.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }, q ? 180 : 0)
 
     return () => {
@@ -61,6 +79,31 @@ export default function SearchPage() {
       clearTimeout(timeout)
     }
   }, [q, supabase])
+
+  const importBroaderBook = async (book: OpenLibrarySearchResult) => {
+    setImportingId(book.sourceId)
+    setNotice('')
+
+    try {
+      const imported = await importCatalogBook(supabase, {
+        title: book.title,
+        subtitle: book.subtitle,
+        authors: book.authors,
+        isbns: book.isbns,
+        coverUrl: book.coverUrl,
+        publishedYear: book.publishedYear,
+        pageCount: book.pageCount,
+        languageCode: book.languageCodes[0] ?? null,
+      })
+
+      router.push(`/book/${imported.book.id}`)
+      router.refresh()
+    } catch (error) {
+      setNotice((error as Error).message || 'Could not import that book.')
+    } finally {
+      setImportingId(null)
+    }
+  }
 
   const counts = {
     books: books.length,
@@ -131,6 +174,20 @@ export default function SearchPage() {
         </div>
       </div>
 
+      {(notice || broaderSearchError) && (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            marginBottom: 18,
+            color: 'var(--ink-2)',
+            borderColor: notice ? 'var(--pulp)' : 'var(--border)',
+          }}
+        >
+          {notice || broaderSearchError}
+        </div>
+      )}
+
       {q && (
         <div className="tabs" style={{ marginBottom: 24, flexWrap: 'wrap' }}>
           {[
@@ -194,8 +251,18 @@ export default function SearchPage() {
       )}
 
       {!loading && q && total === 0 && (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
-          Nothing found. Try a different query.
+        <div
+          className="card"
+          style={{
+            padding: 28,
+            marginBottom: broaderBooks.length > 0 ? 24 : 0,
+            textAlign: 'center',
+            color: 'var(--ink-3)',
+          }}
+        >
+          {broaderBooks.length > 0
+            ? 'Nothing in Bookcase yet. Try one of the broader catalog matches below.'
+            : 'Nothing found in Bookcase yet. Try a different query or broaden the search.'}
         </div>
       )}
 
@@ -245,6 +312,96 @@ export default function SearchPage() {
                     </div>
                   )}
                 </Link>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {showBooks && broaderBooks.length > 0 && (
+        <section style={{ marginBottom: 36 }}>
+          <div className="eyebrow" style={{ marginBottom: 14 }}>
+            Broader catalog matches ({broaderBooks.length})
+          </div>
+          <div
+            className="card"
+            style={{
+              padding: 16,
+              marginBottom: 14,
+              background: 'linear-gradient(135deg, var(--paper), color-mix(in oklab, var(--moss) 8%, var(--paper)))',
+            }}
+          >
+            <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+              These results come from Open Library so Bookcase feels closer to Fable, Pagebound, or StoryGraph for long-tail search. Import any match and it becomes a normal Bookcase title.
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: 16,
+            }}
+          >
+            {broaderBooks.map((book) => {
+              const uiBook = toOpenLibraryUiBook(book)
+              const isImporting = importingId === book.sourceId
+
+              return (
+                <div key={book.sourceId} className="card" style={{ padding: 14 }}>
+                  <a
+                    href={book.openLibraryUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ textDecoration: 'none', color: 'inherit' }}
+                  >
+                    <Cover book={uiBook} size="100%" style={{ width: '100%', marginBottom: 10 }} />
+                  </a>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {book.title}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', minHeight: 18 }}>
+                    {book.authors.join(', ') || 'Unknown author'}
+                  </div>
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: 'var(--ink-4)',
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      marginTop: 6,
+                    }}
+                  >
+                    Open Library{book.publishedYear ? ` - ${book.publishedYear}` : ''}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className="btn btn-pulp btn-sm"
+                      onClick={() => importBroaderBook(book)}
+                      disabled={isImporting}
+                      style={{ flex: 1, justifyContent: 'center' }}
+                    >
+                      {isImporting ? 'Importing...' : 'Import book'}
+                    </button>
+                    <a
+                      href={book.openLibraryUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-outline btn-sm"
+                    >
+                      Source
+                    </a>
+                  </div>
+                </div>
               )
             })}
           </div>
@@ -443,4 +600,83 @@ export default function SearchPage() {
       )}
     </div>
   )
+}
+
+async function fetchBroaderCatalog(query: string, limit = 12) {
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+  })
+  const response = await fetch(`/api/catalog/search?${params.toString()}`)
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(payload?.error || 'Could not search the wider catalog right now.')
+  }
+
+  const payload = (await response.json()) as { results?: OpenLibrarySearchResult[] }
+  return payload.results ?? []
+}
+
+function filterBroaderCatalogResults(
+  broaderBooks: OpenLibrarySearchResult[],
+  localBooks: DbBookWithAuthors[]
+) {
+  const localIsbns = new Set(
+    localBooks
+      .map((book) => normalizeSearchValue(book.isbn))
+      .filter(Boolean) as string[]
+  )
+  const localKeys = new Set(
+    localBooks.map((book) =>
+      buildSearchBookKey(book.title, book.authors.map((author) => author.name))
+    )
+  )
+
+  return broaderBooks.filter((book) => {
+    const hasMatchingIsbn = book.isbns.some((isbn) => localIsbns.has(normalizeSearchValue(isbn)))
+    if (hasMatchingIsbn) return false
+    return !localKeys.has(buildSearchBookKey(book.title, book.authors))
+  })
+}
+
+function buildSearchBookKey(title: string, authors: string[]) {
+  return `${normalizeSearchValue(title)}|${authors
+    .map(normalizeSearchValue)
+    .filter(Boolean)
+    .sort()
+    .join('|')}`
+}
+
+function normalizeSearchValue(value: string | null | undefined) {
+  return value
+    ?.toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || ''
+}
+
+function toOpenLibraryUiBook(book: OpenLibrarySearchResult) {
+  return {
+    id: book.sourceId,
+    title: book.title,
+    author: book.authors.join(', ') || 'Unknown',
+    cover: book.coverUrl ?? '',
+    rating: 0,
+    ratings: 0,
+    mood: [] as string[],
+    genre: '',
+    pages: book.pageCount ?? 0,
+    year: book.publishedYear ?? 0,
+    color: `oklch(36% 0.08 ${hashHue(book.sourceId)})`,
+  }
+}
+
+function hashHue(input: string) {
+  let hash = 0
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) % 360
+  }
+  return hash
 }
