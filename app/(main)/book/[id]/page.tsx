@@ -7,7 +7,8 @@ import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { Spoiler } from '@/components/redesign/primitives'
 import { LikeButton } from '@/components/redesign/LikeButton'
-import { PostUpvoteButton } from '@/components/redesign/PostUpvoteButton'
+import { PostVoteButtons } from '@/components/redesign/PostUpvoteButton'
+import { HalfStarInput, StarDisplay } from '@/components/redesign/Stars'
 import { createClient } from '@/lib/supabase/client'
 import { shareUrl } from '@/lib/share'
 import {
@@ -23,7 +24,7 @@ import {
   listBookPosts,
   listBookTags,
   listLikedReviewIds,
-  listUpvotedPostIds,
+  listPostVotes,
   listPostComments,
   listReviewsForBook,
   listSavedReviewIds,
@@ -40,11 +41,14 @@ import {
   type DbReview,
   type DbTag,
   type DbUserBook,
+  type PostVote,
 } from '@/lib/db'
 
 type CommentMap = Record<string, DbBookPostComment[]>
 type DraftMap = Record<string, string>
 type ToggleMap = Record<string, boolean>
+
+const MAX_REPLY_DEPTH = 2
 
 export default function BookPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -58,10 +62,12 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [tags, setTags] = useState<DbTag[]>([])
   const [savedReviewIds, setSavedReviewIds] = useState<string[]>([])
   const [likedReviewIds, setLikedReviewIds] = useState<string[]>([])
-  const [upvotedPostIds, setUpvotedPostIds] = useState<string[]>([])
+  const [postVotes, setPostVotes] = useState<Record<string, PostVote>>({})
   const [commentsByPost, setCommentsByPost] = useState<CommentMap>({})
   const [commentDrafts, setCommentDrafts] = useState<DraftMap>({})
+  const [replyDrafts, setReplyDrafts] = useState<DraftMap>({})
   const [openComments, setOpenComments] = useState<ToggleMap>({})
+  const [replyingTo, setReplyingTo] = useState<Record<string, string | null>>({})
   const [tab, setTab] = useState<'threads' | 'reviews'>('threads')
   const [loading, setLoading] = useState(true)
 
@@ -106,22 +112,22 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       setTags(tagRows)
 
       if (profile) {
-        const [userBookRow, savedIds, likedIds, upvotedIds] = await Promise.all([
+        const [userBookRow, savedIds, likedIds, votes] = await Promise.all([
           getUserBook(supabase, profile.id, id),
           listSavedReviewIds(supabase, reviewRows.map((review) => review.id)),
           listLikedReviewIds(supabase, reviewRows.map((review) => review.id)),
-          listUpvotedPostIds(supabase, threadRows.map((thread) => thread.id)),
+          listPostVotes(supabase, threadRows.map((thread) => thread.id)),
         ])
         if (cancelled) return
         setUserBook(userBookRow)
         setSavedReviewIds(savedIds)
         setLikedReviewIds(likedIds)
-        setUpvotedPostIds(upvotedIds)
+        setPostVotes(votes)
       } else {
         setUserBook(null)
         setSavedReviewIds([])
         setLikedReviewIds([])
-        setUpvotedPostIds([])
+        setPostVotes({})
       }
 
       if (!cancelled) setLoading(false)
@@ -146,8 +152,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     const rows = await listBookPosts(supabase, id)
     setThreads(rows)
     if (me) {
-      const ids = await listUpvotedPostIds(supabase, rows.map((thread) => thread.id))
-      setUpvotedPostIds(ids)
+      const votes = await listPostVotes(supabase, rows.map((thread) => thread.id))
+      setPostVotes(votes)
     }
   }
 
@@ -395,22 +401,13 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
           <div className="card" style={{ padding: 20, width: 260, background: 'var(--ink)', color: 'var(--paper)', borderColor: 'var(--ink)' }}>
             <div className="eyebrow" style={{ color: 'var(--ink-4)', marginBottom: 12 }}>your rating</div>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  onClick={() => saveRating(star)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 28,
-                    color: star <= myRating ? 'var(--pulp)' : 'var(--ink-4)',
-                  }}
-                >
-                  *
-                </button>
-              ))}
+            <div style={{ marginBottom: 16 }}>
+              <HalfStarInput
+                value={myRating}
+                onChange={saveRating}
+                size={28}
+                emptyColor="var(--ink-4)"
+              />
             </div>
             <button
               className="btn btn-pulp btn-sm"
@@ -454,23 +451,8 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
           <form onSubmit={submitReview}>
             <div className="eyebrow" style={{ marginBottom: 8 }}>Write a review</div>
             <h3 className="serif" style={{ fontSize: 26, marginBottom: 14 }}>{book.title}</h3>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  onClick={() => setReviewRating(star)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 30,
-                    color: star <= reviewRating ? 'var(--pulp)' : 'var(--ink-4)',
-                  }}
-                >
-                  *
-                </button>
-              ))}
+            <div style={{ marginBottom: 14 }}>
+              <HalfStarInput value={reviewRating} onChange={setReviewRating} size={30} />
             </div>
             <textarea
               value={reviewBody}
@@ -580,10 +562,10 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                     )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                      <PostUpvoteButton
+                      <PostVoteButtons
                         postId={thread.id}
                         initialCount={thread.upvotes}
-                        initialUpvoted={upvotedPostIds.includes(thread.id)}
+                        initialVote={postVotes[thread.id] ?? 0}
                       />
                       <button
                         className="btn btn-ghost btn-sm"
@@ -613,35 +595,47 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
                     {commentsOpen && (
                       <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-                        {comments.map((comment) => {
-                          const commenter = toUiUser(comment.profile)
-                          return (
-                            <div key={comment.id} style={{ padding: 12, borderRadius: 14, background: 'var(--paper-2)', border: '1px solid var(--border)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                                <Avatar user={commenter} size={22} />
-                                <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-                                  <b style={{ color: 'var(--ink)' }}>@{commenter.handle}</b> · {new Date(comment.created_at).toLocaleDateString()}
-                                </div>
-                                {me?.id === comment.user_id && (
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    style={{ marginLeft: 'auto' }}
-                                    onClick={async () => {
-                                      await deleteComment(supabase, comment.id)
-                                      await loadComments(thread.id)
-                                      await refreshThreads()
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                )}
-                              </div>
-                              <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-                                {comment.contains_spoiler ? <Spoiler>{comment.body}</Spoiler> : comment.body}
-                              </div>
-                            </div>
-                          )
-                        })}
+                        {buildCommentTree(comments, MAX_REPLY_DEPTH).map((node) => (
+                          <CommentNode
+                            key={node.comment.id}
+                            node={node}
+                            depth={0}
+                            maxDepth={MAX_REPLY_DEPTH}
+                            threadId={thread.id}
+                            me={me}
+                            replyingTo={replyingTo[thread.id] ?? null}
+                            replyDraft={replyDrafts[thread.id] ?? ''}
+                            onChangeReplyDraft={(value) =>
+                              setReplyDrafts((current) => ({ ...current, [thread.id]: value }))
+                            }
+                            onStartReply={(commentId) => {
+                              setReplyingTo((current) => ({ ...current, [thread.id]: commentId }))
+                              setReplyDrafts((current) => ({ ...current, [thread.id]: '' }))
+                            }}
+                            onCancelReply={() => {
+                              setReplyingTo((current) => ({ ...current, [thread.id]: null }))
+                              setReplyDrafts((current) => ({ ...current, [thread.id]: '' }))
+                            }}
+                            onDelete={async (commentId) => {
+                              await deleteComment(supabase, commentId)
+                              await loadComments(thread.id)
+                              await refreshThreads()
+                            }}
+                            onSubmitReply={async (parentId) => {
+                              const value = (replyDrafts[thread.id] ?? '').trim()
+                              if (!value) return
+                              await createComment(supabase, {
+                                postId: thread.id,
+                                body: value,
+                                parentId,
+                              })
+                              setReplyingTo((current) => ({ ...current, [thread.id]: null }))
+                              setReplyDrafts((current) => ({ ...current, [thread.id]: '' }))
+                              await loadComments(thread.id)
+                              await refreshThreads()
+                            }}
+                          />
+                        ))}
 
                         {me ? (
                           <form
@@ -662,7 +656,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                               placeholder="Add a comment"
                               style={{ flex: 1, padding: '10px 12px', borderRadius: 999, border: '1px solid var(--border)', fontSize: 13 }}
                             />
-                            <button type="submit" className="btn btn-outline btn-sm">Reply</button>
+                            <button type="submit" className="btn btn-outline btn-sm">Comment</button>
                           </form>
                         ) : (
                           <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>Sign in to join the thread.</div>
@@ -696,10 +690,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                           @{user.handle} · {new Date(review.created_at).toLocaleDateString()}
                         </div>
                       </div>
-                      <div style={{ color: 'var(--pulp)', fontSize: 14 }}>
-                        {'*'.repeat(Math.floor(review.rating))}
-                        <span style={{ color: 'var(--ink-4)' }}>{'*'.repeat(Math.max(0, 5 - Math.ceil(review.rating)))}</span>
-                      </div>
+                      <StarDisplay value={review.rating} size={14} />
                     </div>
                     <p style={{ fontSize: 15, lineHeight: 1.55 }}>
                       {review.contains_spoiler ? (
@@ -817,6 +808,178 @@ function Modal({ children, onClose }: { children: React.ReactNode; onClose: () =
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ padding: 28, width: 520, maxWidth: '100%' }}>
         {children}
       </div>
+    </div>
+  )
+}
+
+type CommentTreeNode = {
+  comment: DbBookPostComment
+  children: CommentTreeNode[]
+}
+
+function buildCommentTree(comments: DbBookPostComment[], maxDepth: number): CommentTreeNode[] {
+  const byId = new Map<string, CommentTreeNode>()
+  for (const comment of comments) {
+    byId.set(comment.id, { comment, children: [] })
+  }
+  const roots: CommentTreeNode[] = []
+  const depthOf = (id: string): number => {
+    let depth = 0
+    let cursor = byId.get(id)
+    while (cursor?.comment.parent_id) {
+      const parent = byId.get(cursor.comment.parent_id)
+      if (!parent) break
+      depth += 1
+      cursor = parent
+      if (depth > 10) break
+    }
+    return depth
+  }
+  for (const comment of comments) {
+    const node = byId.get(comment.id)!
+    const parentId = comment.parent_id
+    if (!parentId || !byId.has(parentId)) {
+      roots.push(node)
+      continue
+    }
+    const parentDepth = depthOf(parentId)
+    if (parentDepth + 1 >= maxDepth) {
+      const parent = byId.get(parentId)!
+      parent.children.push(node)
+    } else {
+      byId.get(parentId)!.children.push(node)
+    }
+  }
+  return roots
+}
+
+function CommentNode({
+  node,
+  depth,
+  maxDepth,
+  threadId,
+  me,
+  replyingTo,
+  replyDraft,
+  onChangeReplyDraft,
+  onStartReply,
+  onCancelReply,
+  onSubmitReply,
+  onDelete,
+}: {
+  node: CommentTreeNode
+  depth: number
+  maxDepth: number
+  threadId: string
+  me: DbProfile | null
+  replyingTo: string | null
+  replyDraft: string
+  onChangeReplyDraft: (value: string) => void
+  onStartReply: (commentId: string) => void
+  onCancelReply: () => void
+  onSubmitReply: (parentId: string) => Promise<void>
+  onDelete: (commentId: string) => Promise<void>
+}) {
+  const commenter = toUiUser(node.comment.profile)
+  const canReply = depth < maxDepth - 1
+  const isReplying = replyingTo === node.comment.id
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 14,
+        background: depth === 0 ? 'var(--paper-2)' : 'var(--paper)',
+        border: '1px solid var(--border)',
+        marginLeft: depth > 0 ? 16 : 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <Avatar user={commenter} size={22} />
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          <b style={{ color: 'var(--ink)' }}>@{commenter.handle}</b>{' '}·{' '}
+          {new Date(node.comment.created_at).toLocaleDateString()}
+        </div>
+        {me?.id === node.comment.user_id && (
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => onDelete(node.comment.id)}
+          >
+            Delete
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+        {node.comment.contains_spoiler ? (
+          <Spoiler>{node.comment.body}</Spoiler>
+        ) : (
+          node.comment.body
+        )}
+      </div>
+
+      {me && canReply && !isReplying && (
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          style={{ marginTop: 6, padding: '2px 8px', fontSize: 11 }}
+          onClick={() => onStartReply(node.comment.id)}
+        >
+          Reply
+        </button>
+      )}
+
+      {isReplying && me && (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault()
+            await onSubmitReply(node.comment.id)
+          }}
+          style={{ display: 'flex', gap: 8, marginTop: 8 }}
+        >
+          <input
+            autoFocus
+            value={replyDraft}
+            onChange={(e) => onChangeReplyDraft(e.target.value)}
+            placeholder={`Reply to @${commenter.handle}`}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              borderRadius: 999,
+              border: '1px solid var(--border)',
+              fontSize: 12,
+            }}
+          />
+          <button type="submit" className="btn btn-outline btn-sm">
+            Post
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancelReply}>
+            Cancel
+          </button>
+        </form>
+      )}
+
+      {node.children.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+          {node.children.map((child) => (
+            <CommentNode
+              key={child.comment.id}
+              node={child}
+              depth={depth + 1}
+              maxDepth={maxDepth}
+              threadId={threadId}
+              me={me}
+              replyingTo={replyingTo}
+              replyDraft={replyDraft}
+              onChangeReplyDraft={onChangeReplyDraft}
+              onStartReply={onStartReply}
+              onCancelReply={onCancelReply}
+              onSubmitReply={onSubmitReply}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

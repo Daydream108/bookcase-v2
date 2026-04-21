@@ -1220,6 +1220,17 @@ export async function upsertUserBook(
   return row
 }
 
+export async function removeUserBook(supabase: Client, bookId: string): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('user_books')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('book_id', bookId)
+  if (error) throw error
+}
+
 export async function importGoodreadsLibrary(
   supabase: Client,
   entries: GoodreadsImportEntry[],
@@ -1578,58 +1589,87 @@ export async function deleteComment(supabase: Client, commentId: string) {
   if (error) throw error
 }
 
-export async function togglePostUpvote(
+export type PostVote = 1 | -1 | 0
+
+export async function setPostVote(
   supabase: Client,
-  postId: string
-): Promise<boolean> {
+  postId: string,
+  next: PostVote
+): Promise<PostVote> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
   const { data: existing } = await supabase
     .from('book_post_upvotes')
-    .select('user_id')
+    .select('vote_value')
     .eq('user_id', user.id)
     .eq('post_id', postId)
     .maybeSingle()
 
-  if (existing) {
+  const currentVote = (existing?.vote_value ?? 0) as PostVote
+
+  if (next === 0) {
+    if (!existing) return 0
     const { error } = await supabase
       .from('book_post_upvotes')
       .delete()
       .eq('user_id', user.id)
       .eq('post_id', postId)
-
     if (error) throw error
-    return false
+    return 0
   }
 
-  const { error } = await supabase.from('book_post_upvotes').insert({
-    user_id: user.id,
-    post_id: postId,
-    vote_value: 1,
-  })
+  if (currentVote === next) return currentVote
 
-  if (error) throw error
-
-  const { data: post } = await supabase
-    .from('book_posts')
-    .select('user_id, title')
-    .eq('id', postId)
-    .maybeSingle()
-  if (post?.user_id) {
-    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
-    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
-    await insertNotification(supabase, {
-      userId: post.user_id,
-      actorId: user.id,
-      type: 'upvote',
-      entityType: 'book_post',
-      entityId: postId,
-      message: `${actorName} upvoted "${post.title}"`,
+  if (existing) {
+    const { error } = await supabase
+      .from('book_post_upvotes')
+      .update({ vote_value: next })
+      .eq('user_id', user.id)
+      .eq('post_id', postId)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('book_post_upvotes').insert({
+      user_id: user.id,
+      post_id: postId,
+      vote_value: next,
     })
+    if (error) throw error
   }
 
-  return true
+  if (next === 1 && currentVote !== 1) {
+    const { data: post } = await supabase
+      .from('book_posts')
+      .select('user_id, title')
+      .eq('id', postId)
+      .maybeSingle()
+    if (post?.user_id && post.user_id !== user.id) {
+      const actor = await supabase
+        .from('profiles')
+        .select('display_name, username')
+        .eq('id', user.id)
+        .maybeSingle()
+      const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
+      await insertNotification(supabase, {
+        userId: post.user_id,
+        actorId: user.id,
+        type: 'upvote',
+        entityType: 'book_post',
+        entityId: postId,
+        message: `${actorName} upvoted "${post.title}"`,
+      })
+    }
+  }
+
+  return next
+}
+
+export async function togglePostUpvote(
+  supabase: Client,
+  postId: string
+): Promise<boolean> {
+  const result = await setPostVote(supabase, postId, 1)
+  return result === 1
 }
 
 export async function listRecentActivity(
@@ -1969,10 +2009,29 @@ export async function listUpvotedPostIds(
   if (!user || !postIds.length) return []
   const { data } = await supabase
     .from('book_post_upvotes')
-    .select('post_id')
+    .select('post_id, vote_value')
     .eq('user_id', user.id)
+    .eq('vote_value', 1)
     .in('post_id', postIds)
   return (data ?? []).map((row: any) => row.post_id).filter(Boolean)
+}
+
+export async function listPostVotes(
+  supabase: Client,
+  postIds: string[]
+): Promise<Record<string, PostVote>> {
+  const user = await getCurrentUser(supabase)
+  if (!user || !postIds.length) return {}
+  const { data } = await supabase
+    .from('book_post_upvotes')
+    .select('post_id, vote_value')
+    .eq('user_id', user.id)
+    .in('post_id', postIds)
+  const result: Record<string, PostVote> = {}
+  for (const row of (data ?? []) as Array<{ post_id: string; vote_value: number }>) {
+    if (row.post_id) result[row.post_id] = row.vote_value === -1 ? -1 : 1
+  }
+  return result
 }
 
 export async function toggleLike(supabase: Client, reviewId: string): Promise<boolean> {

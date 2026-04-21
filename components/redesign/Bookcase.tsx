@@ -137,6 +137,7 @@ function ShelfRow({
   onLeave,
   picker,
   emptyHint,
+  onAdd,
 }: {
   label: string
   note: string
@@ -149,6 +150,7 @@ function ShelfRow({
   onLeave: () => void
   picker?: React.ReactNode
   emptyHint?: string
+  onAdd?: () => void
 }) {
   return (
     <div style={{ marginBottom: 0 }}>
@@ -195,20 +197,43 @@ function ShelfRow({
         <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, padding: '0 28px', minHeight: 230, minWidth: 'max-content' }}>
             {books.length === 0 ? (
-              <div
-                style={{
-                  width: 280,
-                  height: 180,
-                  display: 'grid',
-                  placeItems: 'center',
-                  color: 'rgba(255,245,230,0.35)',
-                  fontSize: 12,
-                  fontStyle: 'italic',
-                  fontFamily: 'var(--font-display, serif)',
-                }}
-              >
-                {emptyHint ?? 'No books on this shelf yet.'}
-              </div>
+              onAdd ? (
+                <button
+                  type="button"
+                  onClick={onAdd}
+                  style={{
+                    width: 280,
+                    height: 180,
+                    display: 'grid',
+                    placeItems: 'center',
+                    color: 'rgba(255,245,230,0.55)',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    fontFamily: 'var(--font-display, serif)',
+                    background: 'rgba(255,245,230,0.03)',
+                    border: '1px dashed rgba(255,245,230,0.2)',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {emptyHint ?? 'No books on this shelf yet.'} Click to add.
+                </button>
+              ) : (
+                <div
+                  style={{
+                    width: 280,
+                    height: 180,
+                    display: 'grid',
+                    placeItems: 'center',
+                    color: 'rgba(255,245,230,0.35)',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    fontFamily: 'var(--font-display, serif)',
+                  }}
+                >
+                  {emptyHint ?? 'No books on this shelf yet.'}
+                </div>
+              )
             ) : (
               <>
                 {books.map((book) => (
@@ -223,22 +248,46 @@ function ShelfRow({
                   />
                 ))}
                 {books.length < 6 && (
-                  <div
-                    style={{
-                      width: 40,
-                      height: 180,
-                      border: '1px dashed rgba(255,245,230,0.15)',
-                      borderRadius: 3,
-                      display: 'grid',
-                      placeItems: 'center',
-                      color: 'rgba(255,245,230,0.25)',
-                      fontSize: 20,
-                      flexShrink: 0,
-                      marginLeft: 8,
-                    }}
-                  >
-                    +
-                  </div>
+                  onAdd ? (
+                    <button
+                      type="button"
+                      onClick={onAdd}
+                      aria-label={`Add to ${label}`}
+                      style={{
+                        width: 40,
+                        height: 180,
+                        border: '1px dashed rgba(255,245,230,0.2)',
+                        borderRadius: 3,
+                        display: 'grid',
+                        placeItems: 'center',
+                        color: 'rgba(255,245,230,0.55)',
+                        fontSize: 24,
+                        flexShrink: 0,
+                        marginLeft: 8,
+                        background: 'transparent',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      +
+                    </button>
+                  ) : (
+                    <div
+                      style={{
+                        width: 40,
+                        height: 180,
+                        border: '1px dashed rgba(255,245,230,0.15)',
+                        borderRadius: 3,
+                        display: 'grid',
+                        placeItems: 'center',
+                        color: 'rgba(255,245,230,0.25)',
+                        fontSize: 20,
+                        flexShrink: 0,
+                        marginLeft: 8,
+                      }}
+                    >
+                      +
+                    </div>
+                  )
                 )}
               </>
             )}
@@ -270,6 +319,8 @@ function ShelfRow({
   )
 }
 
+export type BookcaseShelfTarget = 'favorites' | ShelfKey
+
 export function Bookcase({
   ownerName,
   favorites,
@@ -278,6 +329,8 @@ export function Bookcase({
   storageKey,
   defaultRow2 = 'reading',
   defaultRow3 = 'to_read',
+  onAddToShelf,
+  onRemoveFromShelf,
 }: {
   ownerName: string
   favorites: ShelfBook[]
@@ -286,6 +339,8 @@ export function Bookcase({
   storageKey: string
   defaultRow2?: ShelfKey
   defaultRow3?: ShelfKey
+  onAddToShelf?: (target: BookcaseShelfTarget) => void
+  onRemoveFromShelf?: (bookId: string, target: BookcaseShelfTarget) => Promise<void>
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -328,13 +383,18 @@ export function Bookcase({
     () => [...favorites, ...row2Books, ...row3Books].find((book) => book.id === selected) ?? null,
     [favorites, row2Books, row3Books, selected]
   )
-  const selectedShelf = useMemo(() => {
+  const selectedTarget = useMemo<BookcaseShelfTarget | null>(() => {
     if (!selected) return null
-    if (favorites.some((book) => book.id === selected)) return 'Favorites'
-    if (row2Books.some((book) => book.id === selected)) return SHELF_LABELS[row2].label
-    if (row3Books.some((book) => book.id === selected)) return SHELF_LABELS[row3].label
+    if (favorites.some((book) => book.id === selected)) return 'favorites'
+    if (row2Books.some((book) => book.id === selected)) return row2
+    if (row3Books.some((book) => book.id === selected)) return row3
     return null
   }, [favorites, row2, row2Books, row3, row3Books, selected])
+  const selectedShelf = useMemo(() => {
+    if (!selectedTarget) return null
+    if (selectedTarget === 'favorites') return 'Favorites'
+    return SHELF_LABELS[selectedTarget].label
+  }, [selectedTarget])
 
   const ShelfPicker = ({
     value,
@@ -415,6 +475,7 @@ export function Bookcase({
             onEnter={setHovered}
             onLeave={() => setHovered(null)}
             emptyHint={editable ? 'Pin favorites below to fill this shelf.' : 'No favorites pinned.'}
+            onAdd={editable && onAddToShelf ? () => onAddToShelf('favorites') : undefined}
           />
           <ShelfRow
             label={SHELF_LABELS[row2].label}
@@ -436,6 +497,7 @@ export function Bookcase({
                 }}
               />
             }
+            onAdd={editable && onAddToShelf ? () => onAddToShelf(row2) : undefined}
           />
           <ShelfRow
             label={SHELF_LABELS[row3].label}
@@ -457,6 +519,7 @@ export function Bookcase({
                 }}
               />
             }
+            onAdd={editable && onAddToShelf ? () => onAddToShelf(row3) : undefined}
           />
         </div>
 
@@ -543,6 +606,24 @@ export function Bookcase({
               <Link href={`/book/${selectedBook.id}`} className="btn btn-pulp btn-sm">
                 Open book page
               </Link>
+              {editable && onRemoveFromShelf && selectedTarget && (
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={async () => {
+                    const id = selectedBook.id
+                    const target = selectedTarget
+                    setSelected(null)
+                    try {
+                      await onRemoveFromShelf(id, target)
+                    } catch {
+                      /* caller surfaces the error */
+                    }
+                  }}
+                >
+                  Remove from {selectedShelf ?? 'shelf'}
+                </button>
+              )}
               <button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>
                 Put back
               </button>

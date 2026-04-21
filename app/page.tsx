@@ -5,6 +5,7 @@ import { books, users } from '@/lib/redesign-data'
 import { Cover } from '@/components/redesign/Cover'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Icon } from '@/components/redesign/Icon'
+import { StarDisplay } from '@/components/redesign/Stars'
 
 export default function LandingPage() {
   const floaters = [
@@ -213,10 +214,8 @@ export default function LandingPage() {
                     <div>
                       <div className="serif" style={{ fontSize: 22, lineHeight: 1.1 }}>{book.title}</div>
                       <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{book.author}</div>
-                      <div style={{ marginTop: 8, fontSize: 13 }}>
-                        {'★'.repeat(Math.floor(r.rating))}
-                        {r.rating % 1 ? '½' : ''}
-                        <span style={{ color: 'var(--ink-4)', marginLeft: 4 }}>{'★'.repeat(5 - Math.ceil(r.rating))}</span>
+                      <div style={{ marginTop: 8 }}>
+                        <StarDisplay value={r.rating} size={13} />
                       </div>
                     </div>
                   </div>

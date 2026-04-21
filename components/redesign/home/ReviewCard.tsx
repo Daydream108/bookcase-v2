@@ -5,6 +5,7 @@ import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { Spoiler, VoteBar } from '@/components/redesign/primitives'
+import { StarDisplay } from '@/components/redesign/Stars'
 
 export type Review = {
   userId: string
@@ -34,11 +35,7 @@ export function ReviewCard({ review }: { review: Review }) {
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>@{user.handle} · {review.time}</div>
         </div>
-        <div style={{ display: 'flex', gap: 2, alignItems: 'center', color: 'var(--pulp)', fontSize: 16 }}>
-          {'★'.repeat(Math.floor(review.rating))}
-          {review.rating % 1 ? '½' : ''}
-          <span style={{ color: 'var(--ink-4)' }}>{'★'.repeat(5 - Math.ceil(review.rating))}</span>
-        </div>
+        <StarDisplay value={review.rating} size={16} />
       </header>
 
       <div style={{ display: 'flex', gap: 20 }}>

@@ -7,6 +7,7 @@ import { Cover } from '@/components/redesign/Cover'
 import {
   Bookcase,
   toShelfBook,
+  type BookcaseShelfTarget,
   type ShelfBook,
   type ShelfKey,
 } from '@/components/redesign/Bookcase'
@@ -21,11 +22,14 @@ import {
   listRecentSessions,
   listShelf,
   pinFavorite,
+  removeUserBook,
   reorderFavorites,
+  searchBooks,
   toggleFollow,
   toUiBook,
   toUiUser,
   unpinFavorite,
+  upsertUserBook,
   type DbBadge,
   type DbBookWithAuthors,
   type DbFavoriteBook,
@@ -57,6 +61,11 @@ export default function ProfilePage({
   const [meId, setMeId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [picker, setPicker] = useState<BookcaseShelfTarget | null>(null)
+  const [pickerQuery, setPickerQuery] = useState('')
+  const [pickerResults, setPickerResults] = useState<DbBookWithAuthors[]>([])
+  const [pickerLoading, setPickerLoading] = useState(false)
+  const [pickerError, setPickerError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -185,6 +194,80 @@ export default function ProfilePage({
       .filter((book): book is ShelfBook => book !== null),
   }
 
+  const refreshShelfData = async () => {
+    if (!profile) return
+    const [nextShelf, nextReading, nextFavorites] = await Promise.all([
+      listShelf(supabase, profile.id),
+      listShelf(supabase, profile.id, 'reading'),
+      listFavorites(supabase, profile.id),
+    ])
+    setShelf(nextShelf)
+    setCurrentReading(nextReading)
+    setFavorites(nextFavorites)
+  }
+
+  const openPicker = (target: BookcaseShelfTarget) => {
+    setPicker(target)
+    setPickerQuery('')
+    setPickerResults([])
+    setPickerError('')
+  }
+
+  const closePicker = () => {
+    setPicker(null)
+    setPickerQuery('')
+    setPickerResults([])
+    setPickerError('')
+  }
+
+  useEffect(() => {
+    if (!picker) return
+    const query = pickerQuery.trim()
+    let cancelled = false
+    setPickerLoading(true)
+    setPickerError('')
+
+    const run = async () => {
+      try {
+        const results = await searchBooks(supabase, query, 20)
+        if (!cancelled) setPickerResults(results)
+      } catch (error) {
+        if (!cancelled) {
+          setPickerError(error instanceof Error ? error.message : 'Search failed')
+          setPickerResults([])
+        }
+      } finally {
+        if (!cancelled) setPickerLoading(false)
+      }
+    }
+
+    const handle = setTimeout(run, query ? 220 : 0)
+    return () => {
+      cancelled = true
+      clearTimeout(handle)
+    }
+  }, [picker, pickerQuery, supabase])
+
+  const addToShelf = async (target: BookcaseShelfTarget, bookId: string) => {
+    if (target === 'favorites') {
+      const nextFavorites = await pinFavorite(supabase, bookId)
+      setFavorites(nextFavorites)
+    } else {
+      await upsertUserBook(supabase, { bookId, status: target })
+      await refreshShelfData()
+    }
+  }
+
+  const removeFromShelf = async (bookId: string, target: BookcaseShelfTarget) => {
+    if (target === 'favorites') {
+      const nextFavorites = await unpinFavorite(supabase, bookId)
+      setFavorites(nextFavorites)
+    } else {
+      await removeUserBook(supabase, bookId)
+      await refreshShelfData()
+    }
+  }
+
   const moveFavorite = async (index: number, direction: -1 | 1) => {
     const nextIndex = index + direction
     if (nextIndex < 0 || nextIndex >= favorites.length) return
@@ -274,7 +357,29 @@ export default function ProfilePage({
         sources={bookcaseSources}
         editable={isMe}
         storageKey={`bookcase-layout:${profile.id}`}
+        onAddToShelf={isMe ? openPicker : undefined}
+        onRemoveFromShelf={isMe ? removeFromShelf : undefined}
       />
+
+      {picker && (
+        <BookcasePickerModal
+          target={picker}
+          query={pickerQuery}
+          onQueryChange={setPickerQuery}
+          results={pickerResults}
+          loading={pickerLoading}
+          error={pickerError}
+          onPick={async (bookId) => {
+            try {
+              await addToShelf(picker, bookId)
+              closePicker()
+            } catch (error) {
+              setPickerError(error instanceof Error ? error.message : 'Could not add book')
+            }
+          }}
+          onClose={closePicker}
+        />
+      )}
 
       {isMe && (
         <div className="card" style={{ padding: 24, marginBottom: 24 }}>
@@ -621,6 +726,116 @@ export default function ProfilePage({
             />
             <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>more</span>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BookcasePickerModal({
+  target,
+  query,
+  onQueryChange,
+  results,
+  loading,
+  error,
+  onPick,
+  onClose,
+}: {
+  target: BookcaseShelfTarget
+  query: string
+  onQueryChange: (value: string) => void
+  results: DbBookWithAuthors[]
+  loading: boolean
+  error: string
+  onPick: (bookId: string) => Promise<void>
+  onClose: () => void
+}) {
+  const heading =
+    target === 'favorites'
+      ? 'Pin a favorite'
+      : target === 'reading'
+      ? 'Add to Currently reading'
+      : target === 'to_read'
+      ? 'Add to Want to read'
+      : target === 'read'
+      ? 'Add to Finished'
+      : 'Add to Did not finish'
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'grid',
+        placeItems: 'center',
+        zIndex: 120,
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{ width: 560, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: 24 }}
+      >
+        <div className="eyebrow" style={{ marginBottom: 8 }}>{heading}</div>
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="Search by title, author, or series"
+          style={{
+            padding: '10px 14px',
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            fontSize: 14,
+            marginBottom: 14,
+          }}
+        />
+        {error && <div style={{ fontSize: 12, color: 'var(--danger, #c0392b)', marginBottom: 10 }}>{error}</div>}
+        <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+          {loading && <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Searching...</div>}
+          {!loading && results.length === 0 && (
+            <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+              {query ? 'No matches. Try a different search.' : 'Start typing to search the catalog.'}
+            </div>
+          )}
+          {results.map((book) => (
+            <button
+              key={book.id}
+              type="button"
+              onClick={() => onPick(book.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: 10,
+                borderRadius: 10,
+                border: '1px solid var(--border)',
+                background: 'var(--paper)',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                  {book.title}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                  {book.authors?.map((a) => a.name).join(', ') || 'Unknown author'}
+                  {book.published_year ? ` · ${book.published_year}` : ''}
+                </div>
+              </div>
+              <span className="btn btn-outline btn-sm">Add</span>
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
     </div>
