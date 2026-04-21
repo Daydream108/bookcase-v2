@@ -178,6 +178,34 @@ export default function ProfilePage({
     })
   }, [sessions])
 
+  useEffect(() => {
+    if (!picker) return
+    const query = pickerQuery.trim()
+    let cancelled = false
+    setPickerLoading(true)
+    setPickerError('')
+
+    const run = async () => {
+      try {
+        const results = await searchBooks(supabase, query, 20)
+        if (!cancelled) setPickerResults(results)
+      } catch (error) {
+        if (!cancelled) {
+          setPickerError(error instanceof Error ? error.message : 'Search failed')
+          setPickerResults([])
+        }
+      } finally {
+        if (!cancelled) setPickerLoading(false)
+      }
+    }
+
+    const handle = setTimeout(run, query ? 220 : 0)
+    return () => {
+      cancelled = true
+      clearTimeout(handle)
+    }
+  }, [picker, pickerQuery, supabase])
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: 'var(--ink-3)' }}>
@@ -257,34 +285,6 @@ export default function ProfilePage({
     setPickerResults([])
     setPickerError('')
   }
-
-  useEffect(() => {
-    if (!picker) return
-    const query = pickerQuery.trim()
-    let cancelled = false
-    setPickerLoading(true)
-    setPickerError('')
-
-    const run = async () => {
-      try {
-        const results = await searchBooks(supabase, query, 20)
-        if (!cancelled) setPickerResults(results)
-      } catch (error) {
-        if (!cancelled) {
-          setPickerError(error instanceof Error ? error.message : 'Search failed')
-          setPickerResults([])
-        }
-      } finally {
-        if (!cancelled) setPickerLoading(false)
-      }
-    }
-
-    const handle = setTimeout(run, query ? 220 : 0)
-    return () => {
-      cancelled = true
-      clearTimeout(handle)
-    }
-  }, [picker, pickerQuery, supabase])
 
   const addToShelf = async (target: BookcaseShelfTarget, bookId: string) => {
     if (target === 'favorites') {
