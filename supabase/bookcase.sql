@@ -603,8 +603,8 @@ insert into book_authors (book_id, author_id) values
 on conflict do nothing;
 
 insert into book_genres (book_id, genre_id)
-select b.id, g.id from books b, genres g
-where
+select distinct b.id, g.id from books b, genres g
+where (
   (b.id = 'b1000000-0000-0000-0000-000000000001' and g.slug in ('fiction', 'literary-fiction')) or
   (b.id = 'b1000000-0000-0000-0000-000000000002' and g.slug in ('fiction', 'literary-fiction', 'historical-fiction')) or
   (b.id = 'b1000000-0000-0000-0000-000000000003' and g.slug in ('science-fiction', 'classics')) or
@@ -654,6 +654,13 @@ where
   (b.id = 'b1000000-0000-0000-0000-000000000047' and g.slug in ('fiction', 'fantasy', 'historical-fiction')) or
   (b.id = 'b1000000-0000-0000-0000-000000000048' and g.slug in ('fiction', 'literary-fiction', 'historical-fiction')) or
   (b.id = 'b1000000-0000-0000-0000-000000000049' and g.slug in ('fiction', 'science-fiction'))
+)
+and not exists (
+  select 1
+  from book_genres existing
+  where existing.book_id = b.id
+    and existing.genre_id = g.id
+)
 on conflict (book_id, genre_id) do nothing;
 
 -- ============================================================
@@ -2696,8 +2703,8 @@ on conflict do nothing;
 
 -- Book-Genre links
 insert into book_genres (book_id, genre_id)
-select b.id, g.id from books b, genres g
-where
+select distinct b.id, g.id from books b, genres g
+where (
   (b.id = 'b1000000-0000-0000-0000-000000000050' and g.slug in ('fiction', 'science-fiction', 'fantasy', 'horror'))
   or (b.id = 'b1000000-0000-0000-0000-000000000051' and g.slug in ('fiction', 'fantasy', 'thriller'))
   or (b.id = 'b1000000-0000-0000-0000-000000000052' and g.slug in ('fiction', 'fantasy', 'classics'))
@@ -3022,4 +3029,11 @@ where
   or (b.id = 'b1000000-0000-0000-0000-000000000371' and g.slug in ('philosophy'))
   or (b.id = 'b1000000-0000-0000-0000-000000000372' and g.slug in ('philosophy'))
   or (b.id = 'b1000000-0000-0000-0000-000000000373' and g.slug in ('philosophy'))
+)
+and not exists (
+  select 1
+  from book_genres existing
+  where existing.book_id = b.id
+    and existing.genre_id = g.id
+)
 on conflict (book_id, genre_id) do nothing;
