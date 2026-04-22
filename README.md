@@ -48,6 +48,7 @@ These are the next must-have product gaps after this pass.
 
 ### 1. Apply the new Supabase migrations
 - Run `supabase/migrations/20260421_safety_preferences_tracker.sql` and `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql` against the live project before relying on synced bookcase layouts or moderator review tools.
+- If the Supabase project already exists, do not rerun `supabase/bookcase.sql`. Use `supabase/migrations/20260421_existing_project_safe_apply.sql` instead so you avoid seed collisions like duplicate `book_genres` rows.
 
 Why this matters:
 - The repo now contains the schema, but production still needs the tables and RLS policies created.

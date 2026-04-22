@@ -4,6 +4,12 @@
 -- Order: Extensions → Schema → RLS Policies → Seed Data
 -- ============================================================
 
+-- NOTE:
+-- This file is for fresh databases only.
+-- If your Supabase project already exists, do not rerun this whole file because
+-- it includes the base seed catalog. Use the existing-project helper instead:
+-- supabase/migrations/20260421_existing_project_safe_apply.sql
+
 
 -- ============================================================
 -- EXTENSIONS
