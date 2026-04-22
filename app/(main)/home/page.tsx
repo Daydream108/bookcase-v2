@@ -24,6 +24,14 @@ import {
 } from '@/lib/db'
 import { PostComposer } from '@/components/redesign/home/PostComposer'
 
+function getDismissedOnboardingKey(userId: string) {
+  return `bookcase:onboarding-dismissed:${userId}`
+}
+
+function getHiddenOnboardingStepsKey(userId: string) {
+  return `bookcase:onboarding-hidden-steps:${userId}`
+}
+
 export default function HomePage() {
   const supabase = useMemo(() => createClient(), [])
   const [me, setMe] = useState<DbProfile | null>(null)
@@ -33,6 +41,8 @@ export default function HomePage() {
   const [streak, setStreak] = useState({ current: 0, longest: 0 })
   const [goal, setGoal] = useState<DbReadingGoal | null>(null)
   const [onboarding, setOnboarding] = useState<DbOnboardingState | null>(null)
+  const [dismissedOnboarding, setDismissedOnboarding] = useState(false)
+  const [hiddenOnboardingSteps, setHiddenOnboardingSteps] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = async () => {
@@ -81,6 +91,46 @@ export default function HomePage() {
 
   const displayName = me?.display_name ?? me?.username ?? 'reader'
   const onboardingSteps = buildOnboardingSteps(me, onboarding)
+  const visibleOnboardingSteps = onboardingSteps.filter((step) => !hiddenOnboardingSteps.includes(step.label))
+
+  useEffect(() => {
+    if (!me) {
+      setDismissedOnboarding(false)
+      setHiddenOnboardingSteps([])
+      return
+    }
+
+    try {
+      const dismissed = window.localStorage.getItem(getDismissedOnboardingKey(me.id)) === '1'
+      const rawHiddenSteps = window.localStorage.getItem(getHiddenOnboardingStepsKey(me.id))
+      const parsedHiddenSteps = rawHiddenSteps ? (JSON.parse(rawHiddenSteps) as string[]) : []
+      setDismissedOnboarding(dismissed)
+      setHiddenOnboardingSteps(Array.isArray(parsedHiddenSteps) ? parsedHiddenSteps : [])
+    } catch {
+      setDismissedOnboarding(false)
+      setHiddenOnboardingSteps([])
+    }
+  }, [me])
+
+  const hideOnboardingStep = (label: string) => {
+    if (!me) return
+    setHiddenOnboardingSteps((current) => {
+      if (current.includes(label)) return current
+      const next = [...current, label]
+      try {
+        window.localStorage.setItem(getHiddenOnboardingStepsKey(me.id), JSON.stringify(next))
+      } catch {}
+      return next
+    })
+  }
+
+  const dismissOnboarding = () => {
+    if (!me) return
+    setDismissedOnboarding(true)
+    try {
+      window.localStorage.setItem(getDismissedOnboardingKey(me.id), '1')
+    } catch {}
+  }
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
@@ -114,7 +164,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {me && onboardingSteps.length > 0 && (
+        {me && visibleOnboardingSteps.length > 0 && !dismissedOnboarding && (
           <div className="card" style={{ padding: 20, marginBottom: 20, borderColor: 'color-mix(in oklab, var(--moss) 35%, var(--border))', background: 'linear-gradient(140deg, color-mix(in oklab, var(--moss) 10%, var(--paper)), var(--paper))' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
               <div>
@@ -123,12 +173,22 @@ export default function HomePage() {
                   Finish a few foundational steps so your home feed has something real to work with.
                 </div>
               </div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                {onboardingSteps.filter((step) => step.done).length}/{onboardingSteps.length} done
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  {visibleOnboardingSteps.filter((step) => step.done).length}/{visibleOnboardingSteps.length} done
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissOnboarding}
+                  className="link-u"
+                  style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600, background: 'transparent', border: 0, padding: 0, cursor: 'pointer' }}
+                >
+                  Hide checklist
+                </button>
               </div>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
-              {onboardingSteps.map((step) => (
+              {visibleOnboardingSteps.map((step) => (
                 <div key={step.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>
@@ -137,9 +197,19 @@ export default function HomePage() {
                     <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{step.description}</div>
                   </div>
                   {step.done ? (
-                    <span className="chip" style={{ color: 'var(--moss)', borderColor: 'color-mix(in oklab, var(--moss) 30%, var(--border))' }}>
-                      Complete
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                      <span className="chip" style={{ color: 'var(--moss)', borderColor: 'color-mix(in oklab, var(--moss) 30%, var(--border))' }}>
+                        Complete
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => hideOnboardingStep(step.label)}
+                        className="link-u"
+                        style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600, background: 'transparent', border: 0, padding: 0, cursor: 'pointer' }}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   ) : (
                     <Link href={step.href} className="btn btn-outline btn-sm">
                       {step.cta}
@@ -190,7 +260,7 @@ export default function HomePage() {
           ) : posts.length === 0 ? (
             <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>
               {me
-                ? 'Your feed is quiet so far. Rate a book, follow a reader, or start the first thread above and this space will wake up fast.'
+                ? 'Your feed is quiet so far. Rate a book, follow someone, or start the first thread above and this space will wake up fast.'
                 : 'Nothing yet. Sign in and start the first thread.'}
             </div>
           ) : (
@@ -234,7 +304,7 @@ export default function HomePage() {
           {activity.length === 0 ? (
             <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
               {me
-                ? 'No activity yet. Log a reading session, leave a review, or follow another reader to start shaping the feed.'
+                ? 'No activity yet. Log a reading session, leave a review, or follow someone to start shaping the feed.'
                 : 'No activity yet.'}
             </div>
           ) : (

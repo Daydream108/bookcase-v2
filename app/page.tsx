@@ -92,7 +92,8 @@ export default function LandingPage() {
               </Link>
               <a className="btn btn-outline btn-lg">See a live shelf</a>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            {false && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
               <div style={{ display: 'flex' }}>
                 {users.slice(0, 4).map((u, i) => (
                   <div key={u.id} style={{ marginLeft: i === 0 ? 0 : -10, border: '2px solid var(--paper)', borderRadius: 99 }}>
@@ -103,7 +104,8 @@ export default function LandingPage() {
               <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                 <b style={{ color: 'var(--ink)' }}>24,182</b> readers · <b style={{ color: 'var(--ink)' }}>398k</b> books logged
               </div>
-            </div>
+              </div>
+            )}
           </div>
 
           <div style={{ position: 'relative', height: 540 }}>
