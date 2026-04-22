@@ -6,6 +6,7 @@ import { Avatar } from '@/components/redesign/Avatar'
 import { Icon } from '@/components/redesign/Icon'
 import { createClient } from '@/lib/supabase/client'
 import {
+  deleteNotifications,
   getCurrentProfile,
   listNotifications,
   markNotificationsRead,
@@ -36,6 +37,8 @@ const filterLabels: Record<NotificationFilter, string> = {
   updates: 'Updates',
 }
 
+const NOTIFICATION_FILTER_STORAGE_KEY = 'bookcase:notification-filter'
+
 export default function NotificationsPage() {
   const supabase = useMemo(() => createClient(), [])
   const [me, setMe] = useState<DbProfile | null>(null)
@@ -43,6 +46,7 @@ export default function NotificationsPage() {
   const [targets, setTargets] = useState<Record<string, string>>({})
   const [filter, setFilter] = useState<NotificationFilter>('all')
   const [loading, setLoading] = useState(true)
+  const [notice, setNotice] = useState('')
 
   const refresh = async () => {
     const data = await listNotifications(supabase, 50)
@@ -153,10 +157,21 @@ export default function NotificationsPage() {
     }
   }, [items, supabase])
 
-  const markAll = async () => {
-    await markNotificationsRead(supabase)
-    await refresh()
-  }
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const savedFilter = window.localStorage.getItem(NOTIFICATION_FILTER_STORAGE_KEY)
+    if (!savedFilter) return
+    if (
+      ['all', 'unread', 'social', 'discussions', 'clubs', 'updates'].includes(savedFilter)
+    ) {
+      setFilter(savedFilter as NotificationFilter)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(NOTIFICATION_FILTER_STORAGE_KEY, filter)
+  }, [filter])
 
   const markOneRead = async (id: string) => {
     setItems((current) =>
@@ -178,6 +193,12 @@ export default function NotificationsPage() {
 
   const unreadCount = items.filter((item) => !item.is_read).length
   const visibleItems = items.filter((item) => matchesFilter(item, filter))
+  const unreadVisibleIds = visibleItems
+    .filter((item) => !item.is_read)
+    .map((item) => item.id)
+  const clearableVisibleIds = visibleItems
+    .filter((item) => item.is_read)
+    .map((item) => item.id)
   const filterCounts = {
     all: items.length,
     unread: items.filter((item) => !item.is_read).length,
@@ -186,6 +207,43 @@ export default function NotificationsPage() {
     clubs: items.filter((item) => matchesFilter(item, 'clubs')).length,
     updates: items.filter((item) => matchesFilter(item, 'updates')).length,
   } satisfies Record<NotificationFilter, number>
+
+  const markVisibleRead = async () => {
+    if (!unreadVisibleIds.length) return
+
+    setItems((current) =>
+      current.map((item) =>
+        unreadVisibleIds.includes(item.id) ? { ...item, is_read: true } : item
+      )
+    )
+    setNotice(
+      `${filter === 'all' ? 'All unread notifications' : 'Visible notifications'} marked read`
+    )
+
+    try {
+      await markNotificationsRead(supabase, unreadVisibleIds)
+    } catch (error) {
+      setNotice((error as Error).message || 'Could not mark notifications read.')
+      await refresh()
+    }
+  }
+
+  const clearVisibleRead = async () => {
+    if (!clearableVisibleIds.length) return
+
+    const previousItems = items
+    setItems((current) => current.filter((item) => !clearableVisibleIds.includes(item.id)))
+    setNotice(
+      `${filter === 'all' ? 'Read notifications' : 'Visible read notifications'} cleared`
+    )
+
+    try {
+      await deleteNotifications(supabase, clearableVisibleIds)
+    } catch (error) {
+      setItems(previousItems)
+      setNotice((error as Error).message || 'Could not clear notifications.')
+    }
+  }
 
   return (
     <div style={{ maxWidth: 980, margin: '0 auto', padding: '32px 40px' }}>
@@ -210,33 +268,49 @@ export default function NotificationsPage() {
           </h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {unreadCount > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={markAll}>
-              Mark all read ({unreadCount})
+          {unreadVisibleIds.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={markVisibleRead}>
+              {filter === 'all' ? 'Mark all read' : 'Mark visible read'} ({unreadVisibleIds.length})
+            </button>
+          )}
+          {clearableVisibleIds.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={clearVisibleRead}>
+              {filter === 'all' ? 'Clear read' : 'Clear visible'} ({clearableVisibleIds.length})
             </button>
           )}
         </div>
       </div>
 
+      {notice && (
+        <div className="card" style={{ padding: 14, marginBottom: 18, color: 'var(--ink-2)' }}>
+          {notice}
+        </div>
+      )}
+
       {!loading && items.length > 0 && (
-        <div className="tabs" style={{ marginBottom: 20, flexWrap: 'wrap' }}>
-          {(['all', 'unread', 'social', 'discussions', 'clubs', 'updates'] as NotificationFilter[]).map(
-            (item) => (
-              <button
-                key={item}
-                className={'tab' + (filter === item ? ' active' : '')}
-                onClick={() => setFilter(item)}
-              >
-                {filterLabels[item]}
-                <span
-                  className="mono"
-                  style={{ fontSize: 11, marginLeft: 4, color: 'var(--ink-4)' }}
+        <div style={{ marginBottom: 20 }}>
+          <div className="tabs" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
+            {(['all', 'unread', 'social', 'discussions', 'clubs', 'updates'] as NotificationFilter[]).map(
+              (item) => (
+                <button
+                  key={item}
+                  className={'tab' + (filter === item ? ' active' : '')}
+                  onClick={() => setFilter(item)}
                 >
-                  {filterCounts[item]}
-                </span>
-              </button>
-            )
-          )}
+                  {filterLabels[item]}
+                  <span
+                    className="mono"
+                    style={{ fontSize: 11, marginLeft: 4, color: 'var(--ink-4)' }}
+                  >
+                    {filterCounts[item]}
+                  </span>
+                </button>
+              )
+            )}
+          </div>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+            This filter is remembered on this device.
+          </div>
         </div>
       )}
 

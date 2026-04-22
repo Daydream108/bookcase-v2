@@ -161,6 +161,12 @@ export type DbContentReportRow = DbContentReport & {
   target_user?: DbProfile | null
 }
 
+export type DbModeratorUser = {
+  user_id: string
+  added_at: string
+  profile: DbProfile | null
+}
+
 export type DbBookcasePreferences = {
   user_id: string
   row2_shelf: DbUserBook['status']
@@ -1262,6 +1268,72 @@ export async function isModerator(supabase: Client): Promise<boolean> {
   }
 
   return Boolean(data?.user_id)
+}
+
+export async function listModerators(supabase: Client): Promise<DbModeratorUser[]> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return []
+  if (!(await isModerator(supabase))) return []
+
+  const { data, error } = await supabase
+    .from('moderator_users')
+    .select('user_id, added_at, profile:profiles ( * )')
+    .order('added_at', { ascending: true })
+
+  if (error) {
+    if (error.code === '42P01') return []
+    throw error
+  }
+
+  return ((data ?? []) as Array<{
+    user_id: string
+    added_at: string
+    profile: DbProfile[] | DbProfile | null
+  }>).map((row) => ({
+    user_id: row.user_id,
+    added_at: row.added_at,
+    profile: Array.isArray(row.profile) ? row.profile[0] ?? null : row.profile ?? null,
+  }))
+}
+
+export async function grantModeratorRole(supabase: Client, userId: string): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  if (!(await isModerator(supabase))) {
+    throw new Error('Moderator access required')
+  }
+
+  const { error } = await supabase.from('moderator_users').insert({ user_id: userId })
+
+  if (error) {
+    if (error.code === '23505') return
+    if (error.code === '42P01' || error.code === '42501') {
+      throw new Error('Moderator management needs the latest Supabase SQL before it can be used.')
+    }
+    throw error
+  }
+}
+
+export async function revokeModeratorRole(supabase: Client, userId: string): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  if (!(await isModerator(supabase))) {
+    throw new Error('Moderator access required')
+  }
+
+  const moderators = await listModerators(supabase)
+  if (moderators.length <= 1 && moderators.some((entry) => entry.user_id === userId)) {
+    throw new Error('Keep at least one moderator on the beta.')
+  }
+
+  const { error } = await supabase.from('moderator_users').delete().eq('user_id', userId)
+
+  if (error) {
+    if (error.code === '42P01' || error.code === '42501') {
+      throw new Error('Moderator management needs the latest Supabase SQL before it can be used.')
+    }
+    throw error
+  }
 }
 
 export async function listContentReports(
@@ -3172,7 +3244,18 @@ export async function markNotificationsRead(supabase: Client, ids?: string[]) {
 
   let query = supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id)
   if (ids?.length) query = query.in('id', ids)
-  await query
+  const { error } = await query
+  if (error) throw error
+}
+
+export async function deleteNotifications(supabase: Client, ids?: string[]) {
+  const user = await getCurrentUser(supabase)
+  if (!user) return
+
+  let query = supabase.from('notifications').delete().eq('user_id', user.id)
+  if (ids?.length) query = query.in('id', ids)
+  const { error } = await query
+  if (error) throw error
 }
 
 export async function toggleFollow(supabase: Client, targetUserId: string): Promise<boolean> {

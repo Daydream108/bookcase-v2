@@ -1457,6 +1457,21 @@ create table if not exists moderator_users (
   added_at timestamptz not null default now()
 );
 
+create or replace function public.is_moderator_user(check_user_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from moderator_users
+    where user_id = check_user_id
+  );
+$$;
+
+grant execute on function public.is_moderator_user(uuid) to authenticated;
+
 create index if not exists notification_preferences_updated_idx on notification_preferences (updated_at desc);
 create index if not exists content_reports_reporter_idx on content_reports (reporter_id, created_at desc);
 create index if not exists content_reports_entity_idx on content_reports (entity_type, entity_id);
@@ -1493,7 +1508,15 @@ create policy "Users can manage own bookcase preferences" on bookcase_preference
   with check (auth.uid() = user_id);
 
 drop policy if exists "Users can view own moderator role" on moderator_users;
+drop policy if exists "Moderators can view moderator roles" on moderator_users;
+drop policy if exists "Moderators can manage moderator roles" on moderator_users;
 create policy "Users can view own moderator role" on moderator_users for select using (auth.uid() = user_id);
+create policy "Moderators can view moderator roles" on moderator_users for select using (
+  public.is_moderator_user(auth.uid())
+);
+create policy "Moderators can manage moderator roles" on moderator_users for all
+  using (public.is_moderator_user(auth.uid()))
+  with check (public.is_moderator_user(auth.uid()));
 
 drop policy if exists "Users can view own reports" on content_reports;
 drop policy if exists "Users can create own reports" on content_reports;

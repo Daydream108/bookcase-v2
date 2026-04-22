@@ -4,7 +4,7 @@ This is the single source of truth for project status and the next must-have que
 
 ## Current Status
 
-Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, broader-catalog search/import, notification filters and deep links, comic/graphic novel/manga import tagging, tracker session edit/delete, reusable broader-catalog pickers, a first-class safety center, and server-ready bookcase layout sync all read or write through `lib/db.ts`.
+Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, broader-catalog search/import, notification filters and deep links, comic/graphic novel/manga import tagging, tracker session edit/delete, reusable broader-catalog pickers, a first-class safety center, server-ready bookcase layout sync, notification bulk actions, remembered notification filters, in-app moderator management, and direct moderation deep links all read or write through `lib/db.ts`.
 
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
@@ -26,8 +26,10 @@ Latest completed pushes:
 - Reading tracker reliability is tighter. Same-day same-book logs accumulate instead of clobbering, streaks derive from actual session dates, yearly goal sync is timezone-safe, and `/streak` now shows recent sessions back to the reader.
 - Catalog fallback is better. Missing covers now fall back to ISBN-driven Open Library covers so sparse catalog rows look more complete without waiting on a backfill.
 - Notifications are easier to use. `/notifications` now has filter tabs plus real click-through targets for follows, likes, replies, clubs, roadmap items, and thread activity.
+- Notifications now have demo-ready bulk actions. The selected filter is remembered on-device, visible items can be marked read in one click, and visible read items can be cleared without leaving the page.
 - Broader-catalog imports now classify comic formats. Open Library imports can attach `Comic`, `Graphic Novel`, or `Manga` tags automatically so those titles are searchable and visibly supported in the product instead of being treated as invisible edge cases.
 - `/safety` now gives readers a real safety center with their submitted reports, blocked-reader management, and a moderator queue that activates once the new migration is applied and moderator rows exist.
+- Moderator tooling is less brittle. Once the latest SQL is applied and the first moderator exists, moderators can grant or revoke moderator access in-app and jump straight from a report to the reported review, thread, comment, or club.
 - The streak tracker now supports broader-catalog picking, session history windows, and edit/delete controls for logged sessions.
 - Bookcase row 2 and row 3 can now sync through a real `bookcase_preferences` table when the new migration is applied, while still falling back to local storage if the table is not live yet.
 - Profile shelves, streak logging, and thread creation now share a reusable broader-catalog picker, so missing books can be imported in-place instead of becoming dead ends.
@@ -38,11 +40,10 @@ These are the next must-have product gaps after this pass.
 
 1. Apply and verify the latest `supabase/bookcase.sql` in production so synced bookcase layouts and moderator review tools are actually live on the deployed app.
 2. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
-3. Add a proper moderator assignment flow and more review actions, since moderators are currently granted by inserting rows in `moderator_users`.
+3. Verify moderator management on production after the SQL lands. The first moderator still needs one manual row insert, then the in-app role management flow should take over cleanly.
 4. Finish bookcase customization beyond stock shelves: custom row names, custom list-backed rows, and richer shelf editing controls.
-5. Notifications polish: per-type filter memory, deep links for every notification variant, and better bulk actions.
-6. Catalog support beyond prose books should be verified and polished everywhere: comics, manga, graphic novels, omnibus editions, and other visual reading formats need to feel first-class in every flow.
-7. Demo polish and QA: finish remaining text cleanup, run the live smoke test, and verify every new flow on the real Cloudflare worker.
+5. Catalog support beyond prose books should be verified and polished everywhere: comics, manga, graphic novels, omnibus editions, and other visual reading formats need to feel first-class in every flow.
+6. Demo polish and QA: finish remaining text cleanup, run the live smoke test, and verify every new flow on the real Cloudflare worker.
 
 ## Immediate Follow-Up
 
