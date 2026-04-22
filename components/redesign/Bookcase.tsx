@@ -331,16 +331,18 @@ export function Bookcase({
   defaultRow3 = 'to_read',
   onAddToShelf,
   onRemoveFromShelf,
+  onLayoutChange,
 }: {
   ownerName: string
   favorites: ShelfBook[]
   sources: ShelfSource
   editable: boolean
-  storageKey: string
+  storageKey?: string | null
   defaultRow2?: ShelfKey
   defaultRow3?: ShelfKey
   onAddToShelf?: (target: BookcaseShelfTarget) => void
   onRemoveFromShelf?: (bookId: string, target: BookcaseShelfTarget) => Promise<void>
+  onLayoutChange?: (layout: { row2: ShelfKey; row3: ShelfKey }) => Promise<void> | void
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -348,8 +350,14 @@ export function Bookcase({
   const [row3, setRow3] = useState<ShelfKey>(defaultRow3)
 
   useEffect(() => {
+    setRow2(defaultRow2)
+    setRow3(defaultRow3)
+  }, [defaultRow2, defaultRow3])
+
+  useEffect(() => {
+    if (!storageKey) return
     try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null
       if (!raw) return
       const parsed = JSON.parse(raw) as { row2?: ShelfKey; row3?: ShelfKey }
       if (parsed.row2) setRow2(parsed.row2)
@@ -361,7 +369,7 @@ export function Bookcase({
 
   const persist = (next: { row2?: ShelfKey; row3?: ShelfKey }) => {
     try {
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && storageKey) {
         localStorage.setItem(
           storageKey,
           JSON.stringify({ row2: next.row2 ?? row2, row3: next.row3 ?? row3 })
@@ -491,9 +499,10 @@ export function Bookcase({
               <ShelfPicker
                 value={row2}
                 excluded={row3}
-                onChange={(key) => {
+                onChange={async (key) => {
                   setRow2(key)
                   persist({ row2: key })
+                  await onLayoutChange?.({ row2: key, row3 })
                 }}
               />
             }
@@ -513,9 +522,10 @@ export function Bookcase({
               <ShelfPicker
                 value={row3}
                 excluded={row2}
-                onChange={(key) => {
+                onChange={async (key) => {
                   setRow3(key)
                   persist({ row3: key })
+                  await onLayoutChange?.({ row2, row3: key })
                 }}
               />
             }

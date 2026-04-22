@@ -156,6 +156,26 @@ export type DbContentReport = {
   created_at: string
 }
 
+export type DbContentReportRow = DbContentReport & {
+  reporter?: DbProfile | null
+  target_user?: DbProfile | null
+}
+
+export type DbBookcasePreferences = {
+  user_id: string
+  row2_shelf: DbUserBook['status']
+  row3_shelf: DbUserBook['status']
+  row2_custom_name: string | null
+  row3_custom_name: string | null
+  updated_at: string
+}
+
+export type DbBlockedUser = {
+  blocked_user_id: string
+  created_at: string
+  profile: DbProfile | null
+}
+
 export type DbBlockState = {
   blockedByMe: boolean
   blockedMe: boolean
@@ -372,6 +392,15 @@ const DEFAULT_NOTIFICATION_PREFERENCES = {
   notify_roadmap_updates: true,
 } satisfies Omit<DbNotificationPreferences, 'user_id' | 'updated_at'>
 
+const BOOKCASE_SHELVES = ['reading', 'to_read', 'read', 'dnf'] as const
+
+const DEFAULT_BOOKCASE_PREFERENCES = {
+  row2_shelf: 'reading',
+  row3_shelf: 'to_read',
+  row2_custom_name: null,
+  row3_custom_name: null,
+} satisfies Omit<DbBookcasePreferences, 'user_id' | 'updated_at'>
+
 function yearBounds(year: number) {
   return {
     start: `${year}-01-01`,
@@ -459,6 +488,50 @@ function mapNotificationPreferences(row: any): DbNotificationPreferences {
       row.notify_roadmap_updates ?? DEFAULT_NOTIFICATION_PREFERENCES.notify_roadmap_updates,
     updated_at: row.updated_at ?? new Date().toISOString(),
   }
+}
+
+function coerceBookcaseShelf(value: unknown, fallback: DbUserBook['status']) {
+  return BOOKCASE_SHELVES.includes(value as DbUserBook['status'])
+    ? (value as DbUserBook['status'])
+    : fallback
+}
+
+function mapBookcasePreferences(row: any): DbBookcasePreferences {
+  const row2Shelf = coerceBookcaseShelf(
+    row.row2_shelf,
+    DEFAULT_BOOKCASE_PREFERENCES.row2_shelf
+  )
+  const row3Fallback = row2Shelf === 'to_read' ? 'read' : DEFAULT_BOOKCASE_PREFERENCES.row3_shelf
+  const row3Shelf = coerceBookcaseShelf(row.row3_shelf, row3Fallback)
+
+  return {
+    user_id: row.user_id,
+    row2_shelf: row2Shelf,
+    row3_shelf: row3Shelf === row2Shelf ? row3Fallback : row3Shelf,
+    row2_custom_name: row.row2_custom_name?.trim() || null,
+    row3_custom_name: row.row3_custom_name?.trim() || null,
+    updated_at: row.updated_at ?? new Date().toISOString(),
+  }
+}
+
+function mapContentReportRow(row: any): DbContentReportRow {
+  const reporter = Array.isArray(row.reporter) ? row.reporter[0] : row.reporter
+  const targetUser = Array.isArray(row.target_user) ? row.target_user[0] : row.target_user
+  return {
+    ...(row as DbContentReport),
+    reporter: reporter ? (reporter as DbProfile) : null,
+    target_user: targetUser ? (targetUser as DbProfile) : null,
+  }
+}
+
+function mergeSessionNotes(...notes: Array<string | null | undefined>) {
+  return (
+    notes
+      .map((value) => value?.trim())
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join('\n\n') || null
+  )
 }
 
 function computeStreakSnapshot(sessionDates: string[]) {
@@ -850,6 +923,82 @@ export async function upsertNotificationPreferences(
   return mapNotificationPreferences(data)
 }
 
+export async function getBookcasePreferences(
+  supabase: Client,
+  userId: string
+): Promise<{ supported: boolean; preferences: DbBookcasePreferences | null }> {
+  const { data, error } = await supabase
+    .from('bookcase_preferences')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01') {
+      return {
+        supported: false,
+        preferences: null,
+      }
+    }
+    throw error
+  }
+
+  return {
+    supported: true,
+    preferences: data ? mapBookcasePreferences(data) : null,
+  }
+}
+
+export async function upsertBookcasePreferences(
+  supabase: Client,
+  patch: Partial<Omit<DbBookcasePreferences, 'user_id' | 'updated_at'>>
+): Promise<DbBookcasePreferences> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const current = await getBookcasePreferences(supabase, user.id)
+  const nextRow2 = coerceBookcaseShelf(
+    patch.row2_shelf,
+    current.preferences?.row2_shelf ?? DEFAULT_BOOKCASE_PREFERENCES.row2_shelf
+  )
+  const nextRow3 = coerceBookcaseShelf(
+    patch.row3_shelf,
+    current.preferences?.row3_shelf ?? DEFAULT_BOOKCASE_PREFERENCES.row3_shelf
+  )
+
+  if (nextRow2 === nextRow3) {
+    throw new Error('Choose two different shelves for rows 2 and 3')
+  }
+
+  const { data, error } = await supabase
+    .from('bookcase_preferences')
+    .upsert(
+      {
+        user_id: user.id,
+        ...DEFAULT_BOOKCASE_PREFERENCES,
+        ...(current.preferences ?? {}),
+        ...patch,
+        row2_shelf: nextRow2,
+        row3_shelf: nextRow3,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
+    .select('*')
+    .single()
+
+  if (error) {
+    if (error.code === '42P01') {
+      throw new Error(
+        'Bookcase syncing needs the latest Supabase migration before it can be saved.'
+      )
+    }
+    throw error
+  }
+
+  return mapBookcasePreferences(data)
+}
+
 export async function getUserBlockState(
   supabase: Client,
   targetUserId: string
@@ -906,6 +1055,37 @@ export async function toggleBlockUser(
   return true
 }
 
+export async function listBlockedUsers(supabase: Client): Promise<DbBlockedUser[]> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return []
+
+  const { data, error } = await supabase
+    .from('blocked_users')
+    .select('blocked_user_id, created_at, profile:profiles!blocked_users_blocked_user_id_fkey ( * )')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    if (error.code === '42P01') return []
+    throw error
+  }
+
+  return (
+    (data ?? []) as Array<{
+      blocked_user_id: string
+      created_at: string
+      profile?: DbProfile[] | DbProfile | null
+    }>
+  ).map((row) => {
+    const profile = Array.isArray(row.profile) ? row.profile[0] : row.profile
+    return {
+      blocked_user_id: row.blocked_user_id,
+      created_at: row.created_at,
+      profile: profile ?? null,
+    }
+  })
+}
+
 export async function createContentReport(
   supabase: Client,
   input: {
@@ -939,6 +1119,100 @@ export async function createContentReport(
     throw error
   }
   return data as DbContentReport
+}
+
+export async function isModerator(supabase: Client): Promise<boolean> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return false
+
+  const { data, error } = await supabase
+    .from('moderator_users')
+    .select('user_id')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01') return false
+    throw error
+  }
+
+  return Boolean(data?.user_id)
+}
+
+export async function listContentReports(
+  supabase: Client,
+  options: {
+    scope?: 'mine' | 'moderation'
+    status?: DbContentReport['status'] | 'all'
+    limit?: number
+  } = {}
+): Promise<DbContentReportRow[]> {
+  const user = await getCurrentUser(supabase)
+  if (!user) return []
+
+  const scope = options.scope ?? 'mine'
+  if (scope === 'moderation' && !(await isModerator(supabase))) {
+    return []
+  }
+
+  let query = supabase
+    .from('content_reports')
+    .select(
+      `*,
+       reporter:profiles!content_reports_reporter_id_fkey ( * ),
+       target_user:profiles!content_reports_target_user_id_fkey ( * )`
+    )
+    .order('created_at', { ascending: false })
+    .limit(options.limit ?? 100)
+
+  if (scope === 'mine') {
+    query = query.eq('reporter_id', user.id)
+  }
+
+  if (options.status && options.status !== 'all') {
+    query = query.eq('status', options.status)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    if (error.code === '42P01') return []
+    throw error
+  }
+
+  return (data ?? []).map(mapContentReportRow)
+}
+
+export async function updateContentReportStatus(
+  supabase: Client,
+  reportId: string,
+  status: DbContentReport['status']
+): Promise<DbContentReportRow> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  if (!(await isModerator(supabase))) {
+    throw new Error('Moderator access required')
+  }
+
+  const { data, error } = await supabase
+    .from('content_reports')
+    .update({ status })
+    .eq('id', reportId)
+    .select(
+      `*,
+       reporter:profiles!content_reports_reporter_id_fkey ( * ),
+       target_user:profiles!content_reports_target_user_id_fkey ( * )`
+    )
+    .single()
+
+  if (error) {
+    if (error.code === '42P01') {
+      throw new Error('Moderation tools need the latest Supabase migration before they can be used.')
+    }
+    throw error
+  }
+
+  return mapContentReportRow(data)
 }
 
 export async function getOnboardingState(
@@ -2399,17 +2673,12 @@ export async function logReadingSession(
 
   const { data: existing } = await existingQuery.maybeSingle()
 
-  const mergedNotes = [existing?.notes, input.notes?.trim()]
-    .filter(Boolean)
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .join('\n\n')
-
   const payload = {
     user_id: user.id,
     book_id: input.bookId ?? null,
     pages_read: (existing?.pages_read ?? 0) + (input.pages ?? 0) || null,
     minutes_read: (existing?.minutes_read ?? 0) + (input.minutes ?? 0) || null,
-    notes: mergedNotes || null,
+    notes: mergeSessionNotes(existing?.notes, input.notes),
     session_date: sessionDate,
   }
 
@@ -2441,6 +2710,144 @@ export async function logReadingSession(
   })
 
   return data as DbReadingSession
+}
+
+export async function updateReadingSession(
+  supabase: Client,
+  sessionId: string,
+  input: {
+    bookId?: string | null
+    pages?: number
+    minutes?: number
+    notes?: string | null
+    date?: string
+  }
+): Promise<DbReadingSession> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data: existing, error: existingError } = await supabase
+    .from('reading_sessions')
+    .select('*')
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (existingError) throw existingError
+
+  const nextDate = input.date ?? existing.session_date
+  if (diffDateOnlyInDays(localDateString(), nextDate) > 0) {
+    throw new Error('Reading sessions cannot be logged in the future')
+  }
+
+  const nextBookId = input.bookId === undefined ? existing.book_id : input.bookId
+  const nextPages = input.pages === undefined ? existing.pages_read ?? 0 : Math.max(0, Math.round(input.pages))
+  const nextMinutes =
+    input.minutes === undefined ? existing.minutes_read ?? 0 : Math.max(0, Math.round(input.minutes))
+  const nextNotes = input.notes === undefined ? existing.notes : input.notes?.trim() || null
+
+  if (!nextPages && !nextMinutes) {
+    throw new Error('Add pages or minutes to log a reading session')
+  }
+
+  let collisionQuery = supabase
+    .from('reading_sessions')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('session_date', nextDate)
+    .neq('id', sessionId)
+
+  collisionQuery = nextBookId
+    ? collisionQuery.eq('book_id', nextBookId)
+    : collisionQuery.is('book_id', null)
+
+  const { data: collision } = await collisionQuery.maybeSingle()
+
+  let savedRow: DbReadingSession
+
+  if (collision) {
+    const { data, error } = await supabase
+      .from('reading_sessions')
+      .update({
+        book_id: nextBookId,
+        pages_read: ((collision.pages_read ?? 0) + nextPages) || null,
+        minutes_read: ((collision.minutes_read ?? 0) + nextMinutes) || null,
+        notes: mergeSessionNotes(collision.notes, nextNotes),
+        session_date: nextDate,
+      })
+      .eq('id', collision.id)
+      .select('*')
+      .single()
+
+    if (error) throw error
+
+    const { error: deleteError } = await supabase
+      .from('reading_sessions')
+      .delete()
+      .eq('id', sessionId)
+      .eq('user_id', user.id)
+
+    if (deleteError) throw deleteError
+    savedRow = data as DbReadingSession
+  } else {
+    const { data, error } = await supabase
+      .from('reading_sessions')
+      .update({
+        book_id: nextBookId,
+        pages_read: nextPages || null,
+        minutes_read: nextMinutes || null,
+        notes: nextNotes,
+        session_date: nextDate,
+      })
+      .eq('id', sessionId)
+      .eq('user_id', user.id)
+      .select('*')
+      .single()
+
+    if (error) throw error
+    savedRow = data as DbReadingSession
+  }
+
+  await touchStreak(supabase, user.id)
+  const yearsToSync = new Set(
+    [yearFromDateOnly(existing.session_date), yearFromDateOnly(nextDate)].filter(
+      (value): value is number => value !== null
+    )
+  )
+
+  for (const year of yearsToSync) {
+    await syncReadingGoalProgress(supabase, user.id, year)
+  }
+
+  return savedRow
+}
+
+export async function deleteReadingSession(supabase: Client, sessionId: string): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data: existing, error: existingError } = await supabase
+    .from('reading_sessions')
+    .select('session_date')
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (existingError) throw existingError
+
+  const { error } = await supabase
+    .from('reading_sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+
+  if (error) throw error
+
+  await touchStreak(supabase, user.id)
+  const year = yearFromDateOnly(existing.session_date)
+  if (year !== null) {
+    await syncReadingGoalProgress(supabase, user.id, year)
+  }
 }
 
 export async function listRecentSessions(

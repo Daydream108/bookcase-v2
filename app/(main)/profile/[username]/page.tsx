@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { use, useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
+import { CatalogBookPickerModal } from '@/components/redesign/CatalogBookPickerModal'
 import { Cover } from '@/components/redesign/Cover'
 import {
   Bookcase,
@@ -13,6 +14,7 @@ import {
 } from '@/components/redesign/Bookcase'
 import { createClient } from '@/lib/supabase/client'
 import {
+  getBookcasePreferences,
   getCurrentUser,
   getUserBlockState,
   getProfileByUsername,
@@ -25,15 +27,16 @@ import {
   pinFavorite,
   removeUserBook,
   reorderFavorites,
-  searchBooks,
   toggleBlockUser,
   toggleFollow,
   toUiBook,
   toUiUser,
   unpinFavorite,
+  upsertBookcasePreferences,
   upsertUserBook,
   type DbBadge,
   type DbBlockState,
+  type DbBookcasePreferences,
   type DbBookWithAuthors,
   type DbFavoriteBook,
   type DbProfile,
@@ -65,10 +68,8 @@ export default function ProfilePage({
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [picker, setPicker] = useState<BookcaseShelfTarget | null>(null)
-  const [pickerQuery, setPickerQuery] = useState('')
-  const [pickerResults, setPickerResults] = useState<DbBookWithAuthors[]>([])
-  const [pickerLoading, setPickerLoading] = useState(false)
-  const [pickerError, setPickerError] = useState('')
+  const [bookcasePreferences, setBookcasePreferences] = useState<DbBookcasePreferences | null>(null)
+  const [bookcaseSyncSupported, setBookcaseSyncSupported] = useState(false)
   const [blockState, setBlockState] = useState<DbBlockState>({
     blockedByMe: false,
     blockedMe: false,
@@ -119,12 +120,23 @@ export default function ProfilePage({
           setStreak({ current: 0, longest: 0 })
           setFavorites([])
           setBadges([])
+          setBookcasePreferences(null)
+          setBookcaseSyncSupported(false)
           setLoading(false)
         }
         return
       }
 
-      const [nextStats, allShelf, readingShelf, sessionRows, streakRow, favoriteRows, badgeRows] =
+      const [
+        nextStats,
+        allShelf,
+        readingShelf,
+        sessionRows,
+        streakRow,
+        favoriteRows,
+        badgeRows,
+        nextBookcasePreferences,
+      ] =
         await Promise.all([
           getProfileStats(supabase, nextProfile.id),
           listShelf(supabase, nextProfile.id),
@@ -133,6 +145,7 @@ export default function ProfilePage({
           getStreak(supabase, nextProfile.id),
           listFavorites(supabase, nextProfile.id),
           listBadges(supabase, nextProfile.id),
+          getBookcasePreferences(supabase, nextProfile.id),
         ])
 
       if (cancelled) return
@@ -146,6 +159,8 @@ export default function ProfilePage({
       })
       setFavorites(favoriteRows)
       setBadges(badgeRows)
+      setBookcasePreferences(nextBookcasePreferences.preferences)
+      setBookcaseSyncSupported(nextBookcasePreferences.supported)
       setLoading(false)
     })()
 
@@ -177,34 +192,6 @@ export default function ProfilePage({
       return 'l4'
     })
   }, [sessions])
-
-  useEffect(() => {
-    if (!picker) return
-    const query = pickerQuery.trim()
-    let cancelled = false
-    setPickerLoading(true)
-    setPickerError('')
-
-    const run = async () => {
-      try {
-        const results = await searchBooks(supabase, query, 20)
-        if (!cancelled) setPickerResults(results)
-      } catch (error) {
-        if (!cancelled) {
-          setPickerError(error instanceof Error ? error.message : 'Search failed')
-          setPickerResults([])
-        }
-      } finally {
-        if (!cancelled) setPickerLoading(false)
-      }
-    }
-
-    const handle = setTimeout(run, query ? 220 : 0)
-    return () => {
-      cancelled = true
-      clearTimeout(handle)
-    }
-  }, [picker, pickerQuery, supabase])
 
   if (loading) {
     return (
@@ -274,24 +261,18 @@ export default function ProfilePage({
 
   const openPicker = (target: BookcaseShelfTarget) => {
     setPicker(target)
-    setPickerQuery('')
-    setPickerResults([])
-    setPickerError('')
   }
 
   const closePicker = () => {
     setPicker(null)
-    setPickerQuery('')
-    setPickerResults([])
-    setPickerError('')
   }
 
-  const addToShelf = async (target: BookcaseShelfTarget, bookId: string) => {
+  const addToShelf = async (target: BookcaseShelfTarget, book: DbBookWithAuthors) => {
     if (target === 'favorites') {
-      const nextFavorites = await pinFavorite(supabase, bookId)
+      const nextFavorites = await pinFavorite(supabase, book.id)
       setFavorites(nextFavorites)
     } else {
-      await upsertUserBook(supabase, { bookId, status: target })
+      await upsertUserBook(supabase, { bookId: book.id, status: target })
       await refreshShelfData()
     }
   }
@@ -465,26 +446,52 @@ export default function ProfilePage({
           favorites={favoriteSpines}
           sources={bookcaseSources}
           editable={isMe}
-          storageKey={`bookcase-layout:${profile.id}`}
+          storageKey={bookcasePreferences ? null : isMe ? `bookcase-layout:${profile.id}` : null}
+          defaultRow2={bookcasePreferences?.row2_shelf ?? 'reading'}
+          defaultRow3={bookcasePreferences?.row3_shelf ?? 'to_read'}
           onAddToShelf={isMe ? openPicker : undefined}
           onRemoveFromShelf={isMe ? removeFromShelf : undefined}
+          onLayoutChange={
+            isMe && bookcaseSyncSupported
+              ? async (layout) => {
+                  try {
+                    const saved = await upsertBookcasePreferences(supabase, {
+                      row2_shelf: layout.row2,
+                      row3_shelf: layout.row3,
+                    })
+                    setBookcasePreferences(saved)
+                    setActionMessage('Bookcase layout synced')
+                  } catch (error) {
+                    setActionMessage(
+                      error instanceof Error ? error.message : 'Could not save bookcase layout'
+                    )
+                  }
+                }
+              : undefined
+          }
         />
       )}
 
       {picker && !isBlocked && (
-        <BookcasePickerModal
-          target={picker}
-          query={pickerQuery}
-          onQueryChange={setPickerQuery}
-          results={pickerResults}
-          loading={pickerLoading}
-          error={pickerError}
-          onPick={async (bookId) => {
+        <CatalogBookPickerModal
+          title={
+            picker === 'favorites'
+              ? 'Pin a favorite'
+              : picker === 'reading'
+              ? 'Add to Currently reading'
+              : picker === 'to_read'
+              ? 'Add to Want to read'
+              : picker === 'read'
+              ? 'Add to Finished'
+              : 'Add to Did not finish'
+          }
+          localActionLabel="Add"
+          onSelect={async (book) => {
             try {
-              await addToShelf(picker, bookId)
+              await addToShelf(picker, book)
               closePicker()
             } catch (error) {
-              setPickerError(error instanceof Error ? error.message : 'Could not add book')
+              setActionMessage(error instanceof Error ? error.message : 'Could not add book')
             }
           }}
           onClose={closePicker}

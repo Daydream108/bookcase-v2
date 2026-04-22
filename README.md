@@ -4,7 +4,7 @@ This is the single source of truth for project status and the next must-have que
 
 ## Current Status
 
-Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, broader-catalog search/import, notification filters and deep links, and comic/graphic novel/manga import tagging all read or write through `lib/db.ts`.
+Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, broader-catalog search/import, notification filters and deep links, comic/graphic novel/manga import tagging, tracker session edit/delete, reusable broader-catalog pickers, a first-class safety center, and server-ready bookcase layout sync all read or write through `lib/db.ts`.
 
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
@@ -27,23 +27,27 @@ Latest completed pushes:
 - Catalog fallback is better. Missing covers now fall back to ISBN-driven Open Library covers so sparse catalog rows look more complete without waiting on a backfill.
 - Notifications are easier to use. `/notifications` now has filter tabs plus real click-through targets for follows, likes, replies, clubs, roadmap items, and thread activity.
 - Broader-catalog imports now classify comic formats. Open Library imports can attach `Comic`, `Graphic Novel`, or `Manga` tags automatically so those titles are searchable and visibly supported in the product instead of being treated as invisible edge cases.
+- `/safety` now gives readers a real safety center with their submitted reports, blocked-reader management, and a moderator queue that activates once the new migration is applied and moderator rows exist.
+- The streak tracker now supports broader-catalog picking, session history windows, and edit/delete controls for logged sessions.
+- Bookcase row 2 and row 3 can now sync through a real `bookcase_preferences` table when the new migration is applied, while still falling back to local storage if the table is not live yet.
+- Profile shelves, streak logging, and thread creation now share a reusable broader-catalog picker, so missing books can be imported in-place instead of becoming dead ends.
 
 ## Need Next
 
 These are the next must-have product gaps after this pass.
 
-1. Moderation inbox and reviewer tools for `content_reports`.
-2. Persist bookcase row layout server-side, including custom row names and device sync.
-3. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
-4. Reading tracker management: edit/delete logged sessions, clearer charts, and stronger history controls.
-5. Bookcase management polish: easier add/remove flow from the `+` slots, plus clearer empty-state guidance.
-6. Notifications polish: per-type filter memory, deep links for every notification variant, and better bulk actions.
-7. Catalog support beyond prose books: comics, manga, graphic novels, omnibus editions, and other visual reading formats should feel first-class everywhere.
+1. Apply and verify `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql` in production so synced bookcase layouts and moderator review tools are actually live on the deployed app.
+2. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
+3. Add a proper moderator assignment flow and more review actions, since moderators are currently granted by inserting rows in `moderator_users`.
+4. Finish bookcase customization beyond stock shelves: custom row names, custom list-backed rows, and richer shelf editing controls.
+5. Notifications polish: per-type filter memory, deep links for every notification variant, and better bulk actions.
+6. Catalog support beyond prose books should be verified and polished everywhere: comics, manga, graphic novels, omnibus editions, and other visual reading formats need to feel first-class in every flow.
+7. Demo polish and QA: finish remaining text cleanup, run the live smoke test, and verify every new flow on the real Cloudflare worker.
 
 ## Immediate Follow-Up
 
-### 1. Apply the new Supabase migration
-- Run `supabase/migrations/20260421_safety_preferences_tracker.sql` against the live project before relying on report submissions or account-backed notification preferences.
+### 1. Apply the new Supabase migrations
+- Run `supabase/migrations/20260421_safety_preferences_tracker.sql` and `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql` against the live project before relying on synced bookcase layouts or moderator review tools.
 
 Why this matters:
 - The repo now contains the schema, but production still needs the tables and RLS policies created.
@@ -121,8 +125,11 @@ Suggested path:
 - `components/redesign/Stars.tsx`: `StarDisplay` and `HalfStarInput`
 - `components/redesign/PostUpvoteButton.tsx`: legacy `PostUpvoteButton` plus `PostVoteButtons`
 - `components/redesign/LikeButton.tsx`: optimistic review-like button
-- `components/redesign/Sidebar.tsx`: profile summary, unread count, streak
+- `components/redesign/Sidebar.tsx`: profile summary, unread count, streak, safety nav link
 - `components/redesign/home/PostComposer.tsx`: inline book picker and post form
+- `components/redesign/CatalogBookPickerModal.tsx`: shared local-plus-broader-catalog picker with in-place import
+- `app/(main)/safety/page.tsx`: safety center for reports, blocked readers, and moderator queue
+- `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql`: bookcase sync and moderator policy migration
 - `app/auth/signout/route.ts`: POST handler for sidebar signout
 - `supabase/migrations/20260421_safety_preferences_tracker.sql`: notification preference, report storage, and block-policy migration
 
@@ -139,7 +146,8 @@ Suggested path:
 - `notifications` RLS requires `auth.uid() = actor_id`, so client-created notifications must use the current user as actor.
 - Reporting and live notification preference storage require the `20260421_safety_preferences_tracker.sql` migration to be applied in Supabase.
 - Supabase Auth needs the app origin and `/auth/callback` on the redirect allow list or confirmation/reset emails will bounce before the app can finish the flow.
-- The bookcase row 2 and row 3 shelf choice is still stored in `localStorage` under `bookcase-layout:{profileId}` and is not synced across devices yet.
+- Bookcase row 2 and row 3 now prefer `bookcase_preferences` when that table exists; otherwise they still fall back to `localStorage` under `bookcase-layout:{profileId}`.
+- Moderator review tooling depends on `moderator_users` and the updated `content_reports` policies from `20260421_beta_readiness_bookcase_moderation.sql`.
 
 ## Commit Style
 

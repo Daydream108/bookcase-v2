@@ -2,18 +2,20 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { CatalogBookPickerModal } from '@/components/redesign/CatalogBookPickerModal'
 import { Cover } from '@/components/redesign/Cover'
 import { createClient } from '@/lib/supabase/client'
 import {
   awardProgressBadges,
+  deleteReadingSession,
   getCurrentProfile,
   getReadingGoal,
   getStreak,
   listRecentSessions,
   listShelf,
   logReadingSession,
-  searchBooks,
   toUiBook,
+  updateReadingSession,
   upsertReadingGoal,
   type DbBookWithAuthors,
   type DbProfile,
@@ -33,9 +35,6 @@ export default function StreakPage() {
   const [goal, setGoal] = useState<DbReadingGoal | null>(null)
 
   const [book, setBook] = useState<DbBookWithAuthors | null>(null)
-  const [picking, setPicking] = useState(false)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<DbBookWithAuthors[]>([])
   const [pages, setPages] = useState('')
   const [minutes, setMinutes] = useState('')
   const [notes, setNotes] = useState('')
@@ -46,10 +45,19 @@ export default function StreakPage() {
   const [goalPages, setGoalPages] = useState('5000')
   const [goalMinutes, setGoalMinutes] = useState('3000')
   const [goalSaving, setGoalSaving] = useState(false)
+  const [historyDays, setHistoryDays] = useState(180)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [editingSession, setEditingSession] = useState<DbReadingSession | null>(null)
+  const [editPages, setEditPages] = useState('')
+  const [editMinutes, setEditMinutes] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [editDate, setEditDate] = useState(todayInputValue())
+  const [sessionSaving, setSessionSaving] = useState(false)
+  const [sessionWorkingId, setSessionWorkingId] = useState<string | null>(null)
 
   const loadAll = async (userId: string) => {
     const [nextSessions, nextStreak, nextReading, nextGoal] = await Promise.all([
-      listRecentSessions(supabase, userId, 180),
+      listRecentSessions(supabase, userId, historyDays),
       getStreak(supabase, userId),
       listShelf(supabase, userId, 'reading'),
       getReadingGoal(supabase),
@@ -93,19 +101,10 @@ export default function StreakPage() {
   }, [supabase])
 
   useEffect(() => {
-    if (!picking) return
-    let cancelled = false
-
-    const handle = setTimeout(async () => {
-      const data = await searchBooks(supabase, query, 8)
-      if (!cancelled) setResults(data)
-    }, query ? 180 : 0)
-
-    return () => {
-      cancelled = true
-      clearTimeout(handle)
-    }
-  }, [picking, query, supabase])
+    if (!me) return
+    void loadAll(me.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyDays, me?.id])
 
   const heatmap = useMemo(() => {
     const cells: string[] = new Array(26 * 7).fill('')
@@ -186,6 +185,63 @@ export default function StreakPage() {
       setToast((error as Error).message || 'Could not save the goal')
     } finally {
       setGoalSaving(false)
+      window.setTimeout(() => setToast(''), 2400)
+    }
+  }
+
+  const openEditor = (session: DbReadingSession) => {
+    setEditingSession(session)
+    setEditPages(session.pages_read ? String(session.pages_read) : '')
+    setEditMinutes(session.minutes_read ? String(session.minutes_read) : '')
+    setEditNotes(session.notes ?? '')
+    setEditDate(session.session_date)
+  }
+
+  const closeEditor = () => {
+    setEditingSession(null)
+    setEditPages('')
+    setEditMinutes('')
+    setEditNotes('')
+    setEditDate(todayInputValue())
+  }
+
+  const saveSessionEdit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!editingSession || !me) return
+
+    setSessionSaving(true)
+    try {
+      await updateReadingSession(supabase, editingSession.id, {
+        pages: editPages ? Number(editPages) : 0,
+        minutes: editMinutes ? Number(editMinutes) : 0,
+        notes: editNotes,
+        date: editDate,
+      })
+      await loadAll(me.id)
+      closeEditor()
+      setToast('Session updated')
+    } catch (error) {
+      setToast((error as Error).message || 'Could not update session')
+    } finally {
+      setSessionSaving(false)
+      window.setTimeout(() => setToast(''), 2400)
+    }
+  }
+
+  const removeSession = async (session: DbReadingSession) => {
+    if (!me) return
+    const confirmed = window.confirm('Delete this reading session?')
+    if (!confirmed) return
+
+    setSessionWorkingId(session.id)
+    try {
+      await deleteReadingSession(supabase, session.id)
+      await loadAll(me.id)
+      setToast('Session deleted')
+    } catch (error) {
+      setToast((error as Error).message || 'Could not delete session')
+    } finally {
+      setSessionWorkingId(null)
       window.setTimeout(() => setToast(''), 2400)
     }
   }
@@ -277,52 +333,11 @@ export default function StreakPage() {
                   x
                 </button>
               </div>
-            ) : picking ? (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 6 }}>
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search books..."
-                  style={{
-                    width: '100%',
-                    padding: 8,
-                    border: 'none',
-                    outline: 'none',
-                    background: 'transparent',
-                    fontSize: 13,
-                  }}
-                />
-                <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-                  {results.map((result) => (
-                    <button
-                      key={result.id}
-                      type="button"
-                      onClick={() => {
-                        setBook(result)
-                        setPicking(false)
-                      }}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        padding: 6,
-                        textAlign: 'left',
-                        background: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                      }}
-                    >
-                      {result.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
             ) : (
               <button
                 type="button"
                 className="btn btn-outline btn-sm"
-                onClick={() => setPicking(true)}
+                onClick={() => setPickerOpen(true)}
                 style={{ justifyContent: 'center' }}
               >
                 Pick a book {reading[0]?.book ? '' : '(optional)'}
@@ -378,6 +393,18 @@ export default function StreakPage() {
           </div>
         </form>
       </div>
+
+      {pickerOpen && (
+        <CatalogBookPickerModal
+          title="Pick a book for this session"
+          localActionLabel="Use book"
+          onSelect={(selectedBook) => {
+            setBook(selectedBook)
+            setPickerOpen(false)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
 
       <div className="card" style={{ padding: 24, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: 20, alignItems: 'start' }}>
@@ -477,11 +504,39 @@ export default function StreakPage() {
 
       {sessions.length > 0 && (
         <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-          <div className="eyebrow" style={{ marginBottom: 14 }}>
-            Recent sessions
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginBottom: 14,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div className="eyebrow">
+              Session history
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { label: '30d', value: 30 },
+                { label: '90d', value: 90 },
+                { label: '180d', value: 180 },
+                { label: 'All', value: 3650 },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={historyDays === option.value ? 'btn btn-pulp btn-sm' : 'btn btn-outline btn-sm'}
+                  onClick={() => setHistoryDays(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div style={{ display: 'grid', gap: 10 }}>
-            {sessions.slice(0, 10).map((session) => (
+            {sessions.map((session) => (
               <div
                 key={session.id}
                 style={{
@@ -508,6 +563,23 @@ export default function StreakPage() {
                     {session.notes}
                   </div>
                 )}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => openEditor(session)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => removeSession(session)}
+                    disabled={sessionWorkingId === session.id}
+                  >
+                    {sessionWorkingId === session.id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -532,6 +604,137 @@ export default function StreakPage() {
           </Link>
         </div>
       )}
+
+      {editingSession && (
+        <SessionEditorModal
+          session={editingSession}
+          pages={editPages}
+          minutes={editMinutes}
+          notes={editNotes}
+          date={editDate}
+          saving={sessionSaving}
+          onPagesChange={setEditPages}
+          onMinutesChange={setEditMinutes}
+          onNotesChange={setEditNotes}
+          onDateChange={setEditDate}
+          onSubmit={saveSessionEdit}
+          onClose={closeEditor}
+        />
+      )}
+    </div>
+  )
+}
+
+function SessionEditorModal({
+  session,
+  pages,
+  minutes,
+  notes,
+  date,
+  saving,
+  onPagesChange,
+  onMinutesChange,
+  onNotesChange,
+  onDateChange,
+  onSubmit,
+  onClose,
+}: {
+  session: DbReadingSession
+  pages: string
+  minutes: string
+  notes: string
+  date: string
+  saving: boolean
+  onPagesChange: (value: string) => void
+  onMinutesChange: (value: string) => void
+  onNotesChange: (value: string) => void
+  onDateChange: (value: string) => void
+  onSubmit: (event: React.FormEvent) => Promise<void>
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'grid',
+        placeItems: 'center',
+        zIndex: 120,
+        padding: 20,
+      }}
+    >
+      <form
+        onSubmit={onSubmit}
+        onClick={(event) => event.stopPropagation()}
+        className="card"
+        style={{ width: 520, maxWidth: '100%', display: 'grid', gap: 12, padding: 24 }}
+      >
+        <div className="eyebrow">Edit session</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+          {session.book ? session.book.title : 'General reading session'}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <input
+            value={pages}
+            onChange={(event) => onPagesChange(event.target.value)}
+            placeholder="pages"
+            type="number"
+            min={0}
+            style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, fontSize: 13 }}
+          />
+          <input
+            value={minutes}
+            onChange={(event) => onMinutesChange(event.target.value)}
+            placeholder="minutes"
+            type="number"
+            min={0}
+            style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, fontSize: 13 }}
+          />
+        </div>
+
+        <input
+          value={date}
+          onChange={(event) => onDateChange(event.target.value)}
+          type="date"
+          style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, fontSize: 13 }}
+        />
+
+        <textarea
+          value={notes}
+          onChange={(event) => onNotesChange(event.target.value)}
+          rows={3}
+          placeholder="Notes"
+          style={{
+            padding: 10,
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            fontSize: 13,
+            resize: 'vertical',
+            fontFamily: 'inherit',
+          }}
+        />
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-pulp btn-sm" disabled={saving}>
+            {saving ? 'Saving...' : 'Save changes'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

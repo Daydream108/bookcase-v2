@@ -32,6 +32,7 @@ const paths: Record<string, string> = {
   filter: 'M22 3H2l8 9.46V19l4 2v-8.54L22 3z',
   thread: 'M7 8h10M7 12h10M7 16h6M3 3h18v18H3z',
   at: 'M16 12v1a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
 }
 
 export function Icon({
