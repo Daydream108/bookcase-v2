@@ -45,7 +45,7 @@ export async function searchOpenLibraryBooks(query: string, limit = 12): Promise
   if (!trimmed) return []
 
   const parsed = splitCatalogSearch(trimmed)
-  const perRequestLimit = clamp(limit * 4, limit, 48)
+  const perRequestLimit = Math.max(limit, Math.min(limit * 4, 120))
   const searchPlans = buildOpenLibrarySearchPlans(trimmed, parsed, perRequestLimit)
   const responses = await Promise.all(
     searchPlans.map(async (plan) => ({

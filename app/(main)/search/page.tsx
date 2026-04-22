@@ -30,13 +30,17 @@ import {
 
 type Tab = 'all' | 'books' | 'tags' | 'readers' | 'clubs' | 'threads'
 
+type CatalogSearchBook = {
+  result: OpenLibrarySearchResult
+  localBook: DbBookWithAuthors | null
+}
+
 export default function SearchPage() {
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
   const [q, setQ] = useState('')
   const [tab, setTab] = useState<Tab>('all')
-  const [books, setBooks] = useState<DbBookWithAuthors[]>([])
-  const [broaderBooks, setBroaderBooks] = useState<OpenLibrarySearchResult[]>([])
+  const [catalogBooks, setCatalogBooks] = useState<CatalogSearchBook[]>([])
   const [tags, setTags] = useState<DbTag[]>([])
   const [readers, setReaders] = useState<DbProfile[]>([])
   const [clubs, setClubs] = useState<DbClub[]>([])
@@ -54,22 +58,21 @@ export default function SearchPage() {
 
     const timeout = setTimeout(async () => {
       try {
-        const [bookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await Promise.all([
-          searchBooks(supabase, q, 30),
+        const [localBookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await Promise.all([
+          q ? searchBooks(supabase, q, 120) : Promise.resolve([]),
           q ? searchTags(supabase, q, 12) : Promise.resolve([]),
           q ? searchProfiles(supabase, q, 12) : Promise.resolve([]),
           q ? searchClubsByName(supabase, q, 12) : Promise.resolve([]),
           q ? searchBookPosts(supabase, q, 10) : Promise.resolve([]),
-          q ? fetchBroaderCatalog(q, 24) : Promise.resolve([]),
+          q ? fetchBroaderCatalog(q, 60) : Promise.resolve([]),
         ])
 
         if (cancelled) return
-        setBooks(bookRows)
         setTags(tagRows)
         setReaders(readerRows)
         setClubs(clubRows)
         setThreads(threadRows)
-        setBroaderBooks(filterBroaderCatalogResults(externalRows, bookRows))
+        setCatalogBooks(matchCatalogResults(externalRows, localBookRows))
       } catch (error) {
         if (cancelled) return
         setBroaderSearchError((error as Error).message || 'Could not search the wider catalog right now.')
@@ -111,7 +114,7 @@ export default function SearchPage() {
   }
 
   const counts = {
-    books: books.length + broaderBooks.length,
+    books: catalogBooks.length,
     tags: tags.length,
     readers: readers.length,
     clubs: clubs.length,
@@ -260,73 +263,18 @@ export default function SearchPage() {
           className="card"
           style={{
             padding: 28,
-            marginBottom: broaderBooks.length > 0 ? 24 : 0,
             textAlign: 'center',
             color: 'var(--ink-3)',
           }}
         >
-          {broaderBooks.length > 0
-            ? 'Nothing in Bookcase yet. Try one of the broader catalog matches below.'
-            : 'Nothing found in Bookcase yet. Try a different query or broaden the search.'}
+          Nothing matched that search. Try title plus author, a series name, or an ISBN.
         </div>
       )}
 
-      {showBooks && books.length > 0 && (
+      {showBooks && catalogBooks.length > 0 && (
         <section style={{ marginBottom: 36 }}>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
-            {q ? `In Bookcase (${books.length})` : 'Recent books in catalog'}
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-              gap: 16,
-            }}
-          >
-            {books.map((book) => {
-              const uiBook = toUiBook(book)
-              return (
-                <Link
-                  key={book.id}
-                  href={`/book/${book.id}`}
-                  style={{ textAlign: 'left', padding: 0, textDecoration: 'none', color: 'inherit' }}
-                >
-                  <Cover book={uiBook} size="100%" style={{ width: '100%', marginBottom: 8 }} />
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {book.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{uiBook.author}</div>
-                  {book.genres.length > 0 && (
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: 'var(--pulp)',
-                        marginTop: 4,
-                        fontFamily: 'var(--font-mono)',
-                      }}
-                    >
-                      {book.genres[0].name}
-                    </div>
-                  )}
-                </Link>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {showBooks && broaderBooks.length > 0 && (
-        <section style={{ marginBottom: 36 }}>
-          <div className="eyebrow" style={{ marginBottom: 14 }}>
-            Broader catalog matches ({broaderBooks.length})
+            Books ({catalogBooks.length})
           </div>
           <div
             className="card"
@@ -337,7 +285,7 @@ export default function SearchPage() {
             }}
           >
             <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              These results come from Open Library so Bookcase feels closer to Fable, Pagebound, or StoryGraph for long-tail search. Import any match and it becomes a normal Bookcase title, including comics, graphic novels, and manga.
+              Books now come straight from Open Library so search feels like a real long-tail catalog instead of a small local subset. If a result is already in Bookcase, you can open it directly. If it is not, you can import it in one tap.
             </div>
           </div>
           <div
@@ -347,16 +295,16 @@ export default function SearchPage() {
               gap: 16,
             }}
           >
-            {broaderBooks.map((book) => {
+            {catalogBooks.map(({ result: book, localBook }) => {
               const uiBook = toOpenLibraryUiBook(book)
               const isImporting = importingId === book.sourceId
 
               return (
                 <div key={book.sourceId} className="card" style={{ padding: 14 }}>
                   <a
-                    href={book.openLibraryUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={localBook ? `/book/${localBook.id}` : book.openLibraryUrl}
+                    target={localBook ? undefined : '_blank'}
+                    rel={localBook ? undefined : 'noreferrer'}
                     style={{ textDecoration: 'none', color: 'inherit' }}
                   >
                     <Cover book={uiBook} size="100%" style={{ width: '100%', marginBottom: 10 }} />
@@ -389,6 +337,20 @@ export default function SearchPage() {
                       {catalogFormatLabel(book.format)}
                     </div>
                   )}
+                  {localBook && (
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--moss)',
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        marginTop: 6,
+                      }}
+                    >
+                      Already in Bookcase
+                    </div>
+                  )}
                   <div
                     className="mono"
                     style={{
@@ -402,15 +364,25 @@ export default function SearchPage() {
                     Open Library{book.publishedYear ? ` - ${book.publishedYear}` : ''}
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button
-                      type="button"
-                      className="btn btn-pulp btn-sm"
-                      onClick={() => importBroaderBook(book)}
-                      disabled={isImporting}
-                      style={{ flex: 1, justifyContent: 'center' }}
-                    >
-                      {isImporting ? 'Importing...' : 'Import book'}
-                    </button>
+                    {localBook ? (
+                      <Link
+                        href={`/book/${localBook.id}`}
+                        className="btn btn-pulp btn-sm"
+                        style={{ flex: 1, justifyContent: 'center' }}
+                      >
+                        Open book
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-pulp btn-sm"
+                        onClick={() => importBroaderBook(book)}
+                        disabled={isImporting}
+                        style={{ flex: 1, justifyContent: 'center' }}
+                      >
+                        {isImporting ? 'Importing...' : 'Import book'}
+                      </button>
+                    )}
                     <a
                       href={book.openLibraryUrl}
                       target="_blank"
@@ -637,25 +609,37 @@ async function fetchBroaderCatalog(query: string, limit = 12) {
   return payload.results ?? []
 }
 
-function filterBroaderCatalogResults(
+function matchCatalogResults(
   broaderBooks: OpenLibrarySearchResult[],
   localBooks: DbBookWithAuthors[]
-) {
-  const localIsbns = new Set(
-    localBooks
-      .map((book) => normalizeSearchValue(book.isbn))
-      .filter(Boolean) as string[]
-  )
-  const localKeys = new Set(
-    localBooks.map((book) =>
-      buildSearchBookKey(book.title, book.authors.map((author) => author.name))
-    )
-  )
+): CatalogSearchBook[] {
+  const localByIsbn = new Map<string, DbBookWithAuthors>()
+  const localByKey = new Map<string, DbBookWithAuthors>()
 
-  return broaderBooks.filter((book) => {
-    const hasMatchingIsbn = book.isbns.some((isbn) => localIsbns.has(normalizeSearchValue(isbn)))
-    if (hasMatchingIsbn) return false
-    return !localKeys.has(buildSearchBookKey(book.title, book.authors))
+  for (const book of localBooks) {
+    const normalizedIsbn = normalizeSearchValue(book.isbn)
+    if (normalizedIsbn && !localByIsbn.has(normalizedIsbn)) {
+      localByIsbn.set(normalizedIsbn, book)
+    }
+
+    const key = buildSearchBookKey(book.title, book.authors.map((author) => author.name))
+    if (key && !localByKey.has(key)) {
+      localByKey.set(key, book)
+    }
+  }
+
+  return broaderBooks.map((book) => {
+    const localByMatchingIsbn =
+      book.isbns
+        .map((isbn) => localByIsbn.get(normalizeSearchValue(isbn)))
+        .find(Boolean) ?? null
+    const localByTitleAndAuthor =
+      localByKey.get(buildSearchBookKey(book.title, book.authors)) ?? null
+
+    return {
+      result: book,
+      localBook: localByMatchingIsbn ?? localByTitleAndAuthor,
+    }
   })
 }
 

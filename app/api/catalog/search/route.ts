@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const results = await searchOpenLibraryBooks(query, clamp(limit, 1, 30))
+    const results = await searchOpenLibraryBooks(query, clamp(limit, 1, 60))
     return NextResponse.json(
       { results },
       {
