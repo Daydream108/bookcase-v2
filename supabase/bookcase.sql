@@ -5,10 +5,11 @@
 -- ============================================================
 
 -- NOTE:
--- This file is for fresh databases only.
--- If your Supabase project already exists, do not rerun this whole file because
--- it includes the base seed catalog. Use the existing-project helper instead:
--- supabase/migrations/20260421_existing_project_safe_apply.sql
+-- This is the single canonical SQL file for Bookcase.
+-- It is designed to be safe to rerun in Supabase SQL Editor:
+-- - schema uses create table/index if not exists
+-- - policies are recreated with drop policy if exists
+-- - seed inserts use on conflict do nothing
 
 
 -- ============================================================
@@ -1434,13 +1435,32 @@ create table if not exists content_reports (
   created_at timestamptz not null default now()
 );
 
+create table if not exists bookcase_preferences (
+  user_id uuid primary key references profiles(id) on delete cascade,
+  row2_shelf text not null default 'reading' check (row2_shelf in ('reading', 'to_read', 'read', 'dnf')),
+  row3_shelf text not null default 'to_read' check (row3_shelf in ('reading', 'to_read', 'read', 'dnf')),
+  row2_custom_name text,
+  row3_custom_name text,
+  updated_at timestamptz not null default now(),
+  constraint bookcase_preferences_unique_rows check (row2_shelf <> row3_shelf)
+);
+
+create table if not exists moderator_users (
+  user_id uuid primary key references profiles(id) on delete cascade,
+  added_at timestamptz not null default now()
+);
+
+create index if not exists notification_preferences_updated_idx on notification_preferences (updated_at desc);
 create index if not exists content_reports_reporter_idx on content_reports (reporter_id, created_at desc);
 create index if not exists content_reports_entity_idx on content_reports (entity_type, entity_id);
 create index if not exists content_reports_status_idx on content_reports (status, created_at desc);
+create index if not exists bookcase_preferences_updated_idx on bookcase_preferences (updated_at desc);
 
 alter table notifications enable row level security;
 alter table notification_preferences enable row level security;
 alter table content_reports enable row level security;
+alter table bookcase_preferences enable row level security;
+alter table moderator_users enable row level security;
 
 drop policy if exists "Users can view own notifications" on notifications;
 drop policy if exists "System can insert notifications" on notifications;
@@ -1458,10 +1478,45 @@ create policy "Users can upsert own notification preferences" on notification_pr
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "Bookcase preferences are viewable by everyone" on bookcase_preferences;
+drop policy if exists "Users can manage own bookcase preferences" on bookcase_preferences;
+create policy "Bookcase preferences are viewable by everyone" on bookcase_preferences for select using (true);
+create policy "Users can manage own bookcase preferences" on bookcase_preferences for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can view own moderator role" on moderator_users;
+create policy "Users can view own moderator role" on moderator_users for select using (auth.uid() = user_id);
+
 drop policy if exists "Users can view own reports" on content_reports;
 drop policy if exists "Users can create own reports" on content_reports;
+drop policy if exists "Moderators can review reports" on content_reports;
+drop policy if exists "Moderators can update reports" on content_reports;
 create policy "Users can view own reports" on content_reports for select using (auth.uid() = reporter_id);
 create policy "Users can create own reports" on content_reports for insert with check (auth.uid() = reporter_id);
+create policy "Moderators can review reports" on content_reports for select
+  using (
+    exists (
+      select 1
+      from moderator_users
+      where moderator_users.user_id = auth.uid()
+    )
+  );
+create policy "Moderators can update reports" on content_reports for update
+  using (
+    exists (
+      select 1
+      from moderator_users
+      where moderator_users.user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from moderator_users
+      where moderator_users.user_id = auth.uid()
+    )
+  );
 
 -- ============================================================
 -- Done. Sign up at your app URL to create your first account.

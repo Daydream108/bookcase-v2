@@ -36,7 +36,7 @@ Latest completed pushes:
 
 These are the next must-have product gaps after this pass.
 
-1. Apply and verify `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql` in production so synced bookcase layouts and moderator review tools are actually live on the deployed app.
+1. Apply and verify the latest `supabase/bookcase.sql` in production so synced bookcase layouts and moderator review tools are actually live on the deployed app.
 2. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
 3. Add a proper moderator assignment flow and more review actions, since moderators are currently granted by inserting rows in `moderator_users`.
 4. Finish bookcase customization beyond stock shelves: custom row names, custom list-backed rows, and richer shelf editing controls.
@@ -46,12 +46,12 @@ These are the next must-have product gaps after this pass.
 
 ## Immediate Follow-Up
 
-### 1. Apply the new Supabase migrations
-- Run `supabase/migrations/20260421_safety_preferences_tracker.sql` and `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql` against the live project before relying on synced bookcase layouts or moderator review tools.
-- If the Supabase project already exists, do not rerun `supabase/bookcase.sql`. Use `supabase/migrations/20260421_existing_project_safe_apply.sql` instead so you avoid seed collisions like duplicate `book_genres` rows.
+### 1. Apply the canonical Supabase SQL
+- Run `supabase/bookcase.sql` in the Supabase SQL Editor.
+- `supabase/bookcase.sql` is the single source of truth for both schema and seed data.
 
 Why this matters:
-- The repo now contains the schema, but production still needs the tables and RLS policies created.
+- The repo now contains one canonical Supabase file, but production still needs those latest schema and policy changes applied.
 
 ### 2. Manual live smoke test
 - Re-run the end-to-end deploy smoke test after the next push so we verify the new moderation, preferences, onboarding, and tracker flows on the real Cloudflare worker.
@@ -130,9 +130,8 @@ Suggested path:
 - `components/redesign/home/PostComposer.tsx`: inline book picker and post form
 - `components/redesign/CatalogBookPickerModal.tsx`: shared local-plus-broader-catalog picker with in-place import
 - `app/(main)/safety/page.tsx`: safety center for reports, blocked readers, and moderator queue
-- `supabase/migrations/20260421_beta_readiness_bookcase_moderation.sql`: bookcase sync and moderator policy migration
+- `supabase/bookcase.sql`: the single canonical Supabase schema, policy, and seed file
 - `app/auth/signout/route.ts`: POST handler for sidebar signout
-- `supabase/migrations/20260421_safety_preferences_tracker.sql`: notification preference, report storage, and block-policy migration
 
 ## Gotchas
 
@@ -145,10 +144,10 @@ Suggested path:
 - `roadmap_features.has_voted` is hydrated per request from `roadmap_votes`; it is not stored.
 - Async page params in Next 15 should use `use()` in client components or `await params` in server components.
 - `notifications` RLS requires `auth.uid() = actor_id`, so client-created notifications must use the current user as actor.
-- Reporting and live notification preference storage require the `20260421_safety_preferences_tracker.sql` migration to be applied in Supabase.
+- Reporting and live notification preference storage are defined directly in `supabase/bookcase.sql`.
 - Supabase Auth needs the app origin and `/auth/callback` on the redirect allow list or confirmation/reset emails will bounce before the app can finish the flow.
 - Bookcase row 2 and row 3 now prefer `bookcase_preferences` when that table exists; otherwise they still fall back to `localStorage` under `bookcase-layout:{profileId}`.
-- Moderator review tooling depends on `moderator_users` and the updated `content_reports` policies from `20260421_beta_readiness_bookcase_moderation.sql`.
+- Moderator review tooling depends on `moderator_users` and the updated `content_reports` policies now defined directly in `supabase/bookcase.sql`.
 
 ## Commit Style
 
