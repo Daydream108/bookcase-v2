@@ -55,12 +55,12 @@ export default function SearchPage() {
     const timeout = setTimeout(async () => {
       try {
         const [bookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await Promise.all([
-          searchBooks(supabase, q, 24),
+          searchBooks(supabase, q, 30),
           q ? searchTags(supabase, q, 12) : Promise.resolve([]),
           q ? searchProfiles(supabase, q, 12) : Promise.resolve([]),
           q ? searchClubsByName(supabase, q, 12) : Promise.resolve([]),
           q ? searchBookPosts(supabase, q, 10) : Promise.resolve([]),
-          q ? fetchBroaderCatalog(q, 12) : Promise.resolve([]),
+          q ? fetchBroaderCatalog(q, 24) : Promise.resolve([]),
         ])
 
         if (cancelled) return
@@ -111,7 +111,7 @@ export default function SearchPage() {
   }
 
   const counts = {
-    books: books.length,
+    books: books.length + broaderBooks.length,
     tags: tags.length,
     readers: readers.length,
     clubs: clubs.length,
@@ -147,7 +147,7 @@ export default function SearchPage() {
           <i style={{ color: 'var(--pulp)' }}>anything.</i>
         </h1>
         <p style={{ fontSize: 15, color: 'var(--ink-2)', maxWidth: 640, marginBottom: 20 }}>
-          Search books, comics, manga, authors, moods, readers, clubs, and live threads without leaving the shelf.
+          Search title, author, series, ISBN, comics, manga, readers, clubs, and live threads without leaving the shelf.
         </p>
 
         <div style={{ position: 'relative' }}>
@@ -155,7 +155,7 @@ export default function SearchPage() {
             autoFocus
             value={q}
             onChange={(event) => setQ(event.target.value)}
-            placeholder="books, comics, manga, authors, readers, threads..."
+            placeholder="title, author, series, ISBN, comics, manga..."
             style={{
               width: '100%',
               padding: '18px 20px 18px 52px',
@@ -274,7 +274,7 @@ export default function SearchPage() {
       {showBooks && books.length > 0 && (
         <section style={{ marginBottom: 36 }}>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
-            {q ? `Books, Comics, and Manga (${books.length})` : 'Recent books in catalog'}
+            {q ? `In Bookcase (${books.length})` : 'Recent books in catalog'}
           </div>
           <div
             style={{

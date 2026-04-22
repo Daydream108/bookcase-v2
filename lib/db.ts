@@ -440,6 +440,131 @@ function escapeLikePattern(input: string) {
   return input.replace(/([%_\\])/g, '\\$1')
 }
 
+const SEARCH_STOP_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'the',
+  'of',
+  'to',
+  'for',
+  'in',
+  'on',
+  'at',
+  'by',
+  'with',
+  'from',
+  'book',
+])
+
+function splitSearchQuery(input: string) {
+  const trimmed = input.trim()
+  const parts = trimmed.split(/\s+by\s+/i)
+  return {
+    title: parts.length > 1 ? parts[0].trim() : '',
+    author: parts.length > 1 ? parts.slice(1).join(' by ').trim() : '',
+  }
+}
+
+function tokenizeSearchTerms(input: string) {
+  return Array.from(
+    new Set(
+      normalizeLookupValue(input)
+        .split(' ')
+        .map((term) => term.trim())
+        .filter((term) => term.length > 1 && !SEARCH_STOP_WORDS.has(term))
+    )
+  ).slice(0, 8)
+}
+
+function buildIlikeClauses(columns: string[], values: string[]) {
+  const uniqueValues = Array.from(
+    new Set(
+      values
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => value.replace(/,/g, ' '))
+    )
+  )
+
+  return uniqueValues.flatMap((value) => {
+    const like = `%${escapeLikePattern(value)}%`
+    return columns.map((column) => `${column}.ilike.${like}`)
+  })
+}
+
+function scoreBookSearchResult(
+  book: DbBookWithAuthors,
+  input: {
+    rawQuery: string
+    titleQuery: string
+    authorQuery: string
+    terms: string[]
+  }
+) {
+  const normalizedRawQuery = normalizeLookupValue(input.rawQuery)
+  const normalizedTitleQuery = normalizeLookupValue(input.titleQuery)
+  const normalizedAuthorQuery = normalizeLookupValue(input.authorQuery)
+  const normalizedTitle = normalizeLookupValue(book.title)
+  const normalizedSubtitle = normalizeLookupValue(book.subtitle ?? '')
+  const normalizedDescription = normalizeLookupValue(book.description ?? '')
+  const normalizedIsbn = normalizeLookupValue(book.isbn ?? '')
+  const normalizedAuthors = book.authors.map((author) => normalizeLookupValue(author.name)).join(' ')
+  const normalizedGenres = book.genres.map((genre) => normalizeLookupValue(genre.name)).join(' ')
+  const normalizedHaystack = [
+    normalizedTitle,
+    normalizedSubtitle,
+    normalizedDescription,
+    normalizedAuthors,
+    normalizedGenres,
+    normalizedIsbn,
+  ].join(' ')
+
+  let score = 0
+
+  if (normalizedRawQuery && normalizedIsbn === normalizedRawQuery) score += 340
+  if (normalizedRawQuery && normalizedTitle === normalizedRawQuery) score += 250
+  if (normalizedTitleQuery && normalizedTitle === normalizedTitleQuery) score += 300
+  if (normalizedTitleQuery && normalizedTitle.startsWith(normalizedTitleQuery)) score += 220
+  if (normalizedTitleQuery && normalizedTitle.includes(normalizedTitleQuery)) score += 180
+  if (normalizedAuthorQuery && normalizedAuthors.includes(normalizedAuthorQuery)) score += 190
+  if (normalizedRawQuery && normalizedHaystack.includes(normalizedRawQuery)) score += 120
+
+  let matchedTerms = 0
+  for (const term of input.terms) {
+    if (normalizedTitle.includes(term)) {
+      score += 34
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedAuthors.includes(term)) {
+      score += 30
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedSubtitle.includes(term)) {
+      score += 18
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedGenres.includes(term)) {
+      score += 14
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedDescription.includes(term)) {
+      score += 8
+      matchedTerms += 1
+    }
+  }
+
+  if (input.terms.length > 1 && matchedTerms === input.terms.length) {
+    score += 130
+  }
+
+  return score
+}
+
 function normalizeImportedIsbn(input?: string | null) {
   return input?.replace(/[^0-9Xx]/g, '').toUpperCase() || null
 }
@@ -1258,29 +1383,37 @@ export async function searchBooks(
     return (data ?? []).map(mapBookWithAuthors)
   }
 
-  const like = `%${query.replace(/%/g, '\\%')}%`
+  const parsed = splitSearchQuery(query)
+  const terms = tokenizeSearchTerms(query)
+  const candidateLimit = clamp(limit * 4, limit, 90)
+  const bookClauses = buildIlikeClauses(
+    ['title', 'subtitle', 'description', 'isbn'],
+    [query, parsed.title, ...terms]
+  )
+  const authorClauses = buildIlikeClauses(['name'], [parsed.author, query, ...terms])
+  const taxonomyClauses = buildIlikeClauses(['name'], [query, parsed.title, ...terms])
 
   const [directMatches, authorMatches, genreMatches, tagMatches] = await Promise.all([
     supabase
       .from('books')
       .select(BOOK_SELECT)
-      .or(`title.ilike.${like},subtitle.ilike.${like},description.ilike.${like}`)
-      .limit(limit),
+      .or(bookClauses.join(','))
+      .limit(candidateLimit),
     supabase
       .from('authors')
       .select('id, book_authors ( book:books ( ' + BOOK_SELECT + ' ) )')
-      .ilike('name', like)
-      .limit(10),
+      .or(authorClauses.join(','))
+      .limit(20),
     supabase
       .from('genres')
       .select('id, book_genres ( book:books ( ' + BOOK_SELECT + ' ) )')
-      .ilike('name', like)
-      .limit(10),
+      .or(taxonomyClauses.join(','))
+      .limit(12),
     supabase
       .from('tags')
       .select('id, book_tags ( book:books ( ' + BOOK_SELECT + ' ) )')
-      .ilike('name', like)
-      .limit(10),
+      .or(taxonomyClauses.join(','))
+      .limit(12),
   ])
 
   const byId = new Map<string, DbBookWithAuthors>()
@@ -1310,7 +1443,23 @@ export async function searchBooks(
     }
   }
 
-  return [...byId.values()].slice(0, limit)
+  return [...byId.values()]
+    .map((book) => ({
+      book,
+      score: scoreBookSearchResult(book, {
+        rawQuery: query,
+        titleQuery: parsed.title,
+        authorQuery: parsed.author,
+        terms,
+      }),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score
+      return (right.book.published_year ?? 0) - (left.book.published_year ?? 0)
+    })
+    .slice(0, limit)
+    .map((entry) => entry.book)
 }
 
 export async function searchProfiles(

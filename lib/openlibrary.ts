@@ -44,45 +44,45 @@ export async function searchOpenLibraryBooks(query: string, limit = 12): Promise
   const trimmed = query.trim()
   if (!trimmed) return []
 
-  const params = new URLSearchParams({
-    q: trimmed,
-    limit: String(limit),
-    fields: [
-      'key',
-      'title',
-      'subtitle',
-      'author_name',
-      'first_publish_year',
-      'number_of_pages_median',
-      'cover_i',
-      'isbn',
-      'language',
-      'subject',
-    ].join(','),
-  })
+  const parsed = splitCatalogSearch(trimmed)
+  const perRequestLimit = clamp(limit * 4, limit, 48)
+  const searchPlans = buildOpenLibrarySearchPlans(trimmed, parsed, perRequestLimit)
+  const responses = await Promise.all(
+    searchPlans.map(async (plan) => ({
+      plan,
+      docs: await fetchOpenLibraryDocs(plan.params),
+    }))
+  )
 
-  const response = await fetch(`https://openlibrary.org/search.json?${params.toString()}`, {
-    next: { revalidate: 3600 },
-  })
+  const ranked = new Map<string, { result: OpenLibrarySearchResult; score: number }>()
 
-  if (!response.ok) {
-    throw new Error(`Open Library search failed with ${response.status}`)
+  for (const response of responses) {
+    for (const doc of response.docs) {
+      const mapped = mapOpenLibraryDoc(doc)
+      if (!mapped) continue
+      const score =
+        response.plan.boost +
+        scoreOpenLibraryResult(mapped, {
+          rawQuery: trimmed,
+          titleQuery: parsed.title,
+          authorQuery: parsed.author,
+          terms: parsed.terms,
+        })
+
+      const existing = ranked.get(mapped.sourceId)
+      if (!existing || score > existing.score) {
+        ranked.set(mapped.sourceId, { result: mapped, score })
+      }
+    }
   }
 
-  const payload = (await response.json()) as { docs?: OpenLibraryDoc[] }
-  const seen = new Set<string>()
-  const results: OpenLibrarySearchResult[] = []
-
-  for (const doc of payload.docs ?? []) {
-    const mapped = mapOpenLibraryDoc(doc)
-    if (!mapped) continue
-    if (seen.has(mapped.sourceId)) continue
-    seen.add(mapped.sourceId)
-    results.push(mapped)
-    if (results.length >= limit) break
-  }
-
-  return results
+  return [...ranked.values()]
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score
+      return (right.result.publishedYear ?? 0) - (left.result.publishedYear ?? 0)
+    })
+    .slice(0, limit)
+    .map((entry) => entry.result)
 }
 
 function mapOpenLibraryDoc(doc: OpenLibraryDoc): OpenLibrarySearchResult | null {
@@ -115,6 +115,175 @@ function mapOpenLibraryDoc(doc: OpenLibraryDoc): OpenLibrarySearchResult | null 
     openLibraryUrl: `https://openlibrary.org${sourceId}`,
   }
 }
+
+type CatalogSearchParse = {
+  title: string
+  author: string
+  terms: string[]
+}
+
+type OpenLibrarySearchPlan = {
+  params: URLSearchParams
+  boost: number
+}
+
+const SEARCH_STOP_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'the',
+  'of',
+  'to',
+  'for',
+  'in',
+  'on',
+  'at',
+  'by',
+  'with',
+  'from',
+  'book',
+])
+
+function splitCatalogSearch(query: string): CatalogSearchParse {
+  const trimmed = query.trim()
+  const byParts = trimmed.split(/\s+by\s+/i)
+  const title = byParts.length > 1 ? byParts[0].trim() : ''
+  const author = byParts.length > 1 ? byParts.slice(1).join(' by ').trim() : ''
+  const normalizedTerms = normalizeCatalogSearchValue(trimmed)
+    .split(' ')
+    .map((term) => term.trim())
+    .filter((term) => term.length > 1 && !SEARCH_STOP_WORDS.has(term))
+  const terms = Array.from(new Set(normalizedTerms)).slice(0, 8)
+
+  return {
+    title,
+    author,
+    terms,
+  }
+}
+
+function buildOpenLibrarySearchPlans(
+  rawQuery: string,
+  parsed: CatalogSearchParse,
+  limit: number
+): OpenLibrarySearchPlan[] {
+  const plans: OpenLibrarySearchPlan[] = []
+  const seen = new Set<string>()
+
+  const pushPlan = (params: Record<string, string>, boost: number) => {
+    const searchParams = new URLSearchParams({
+      ...params,
+      limit: String(limit),
+      fields: OPEN_LIBRARY_FIELDS,
+    })
+    const key = searchParams.toString()
+    if (seen.has(key)) return
+    seen.add(key)
+    plans.push({ params: searchParams, boost })
+  }
+
+  pushPlan({ q: rawQuery }, 0)
+
+  if (parsed.title && parsed.author) {
+    pushPlan({ title: parsed.title, author: parsed.author }, 220)
+    pushPlan({ title: parsed.title }, 110)
+    pushPlan({ author: parsed.author }, 80)
+  } else {
+    pushPlan({ title: rawQuery }, 60)
+  }
+
+  return plans
+}
+
+async function fetchOpenLibraryDocs(params: URLSearchParams) {
+  const response = await fetch(`https://openlibrary.org/search.json?${params.toString()}`, {
+    next: { revalidate: 3600 },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Open Library search failed with ${response.status}`)
+  }
+
+  const payload = (await response.json()) as { docs?: OpenLibraryDoc[] }
+  return payload.docs ?? []
+}
+
+function scoreOpenLibraryResult(
+  result: OpenLibrarySearchResult,
+  input: {
+    rawQuery: string
+    titleQuery: string
+    authorQuery: string
+    terms: string[]
+  }
+) {
+  const normalizedRawQuery = normalizeCatalogSearchValue(input.rawQuery)
+  const normalizedTitleQuery = normalizeCatalogSearchValue(input.titleQuery)
+  const normalizedAuthorQuery = normalizeCatalogSearchValue(input.authorQuery)
+  const normalizedTitle = normalizeCatalogSearchValue(result.title)
+  const normalizedSubtitle = normalizeCatalogSearchValue(result.subtitle ?? '')
+  const normalizedAuthors = result.authors.map(normalizeCatalogSearchValue).join(' ')
+  const normalizedHaystack = [normalizedTitle, normalizedSubtitle, normalizedAuthors].join(' ')
+
+  let score = 0
+
+  if (normalizedRawQuery && normalizedTitle === normalizedRawQuery) score += 240
+  if (normalizedTitleQuery && normalizedTitle === normalizedTitleQuery) score += 280
+  if (normalizedTitleQuery && normalizedTitle.startsWith(normalizedTitleQuery)) score += 200
+  if (normalizedTitleQuery && normalizedTitle.includes(normalizedTitleQuery)) score += 170
+  if (normalizedAuthorQuery && normalizedAuthors.includes(normalizedAuthorQuery)) score += 190
+  if (normalizedRawQuery && normalizedHaystack.includes(normalizedRawQuery)) score += 120
+
+  let matchedTerms = 0
+  for (const term of input.terms) {
+    if (normalizedTitle.includes(term)) {
+      score += 34
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedAuthors.includes(term)) {
+      score += 28
+      matchedTerms += 1
+      continue
+    }
+    if (normalizedSubtitle.includes(term)) {
+      score += 18
+      matchedTerms += 1
+    }
+  }
+
+  if (input.terms.length > 1 && matchedTerms === input.terms.length) {
+    score += 120
+  }
+
+  return score
+}
+
+function normalizeCatalogSearchValue(value: string | null | undefined) {
+  return value
+    ?.toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || ''
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+const OPEN_LIBRARY_FIELDS = [
+  'key',
+  'title',
+  'subtitle',
+  'author_name',
+  'first_publish_year',
+  'number_of_pages_median',
+  'cover_i',
+  'isbn',
+  'language',
+  'subject',
+].join(',')
 
 export function catalogFormatLabel(format: CatalogFormat) {
   switch (format) {
