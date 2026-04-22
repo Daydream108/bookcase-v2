@@ -935,8 +935,6 @@ alter table blocked_users      enable row level security;
 alter table blocked_authors    enable row level security;
 alter table blocked_tags       enable row level security;
 alter table review_saves       enable row level security;
-alter table notification_preferences enable row level security;
-alter table content_reports    enable row level security;
 
 -- clubs
 drop policy if exists "Public clubs are viewable by everyone" on clubs;
@@ -1435,6 +1433,8 @@ create index if not exists content_reports_entity_idx on content_reports (entity
 create index if not exists content_reports_status_idx on content_reports (status, created_at desc);
 
 alter table notifications enable row level security;
+alter table notification_preferences enable row level security;
+alter table content_reports enable row level security;
 
 drop policy if exists "Users can view own notifications" on notifications;
 drop policy if exists "System can insert notifications" on notifications;
