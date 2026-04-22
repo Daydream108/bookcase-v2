@@ -279,6 +279,7 @@ export type CatalogBookImportInput = {
   publishedYear?: number | null
   pageCount?: number | null
   languageCode?: string | null
+  tagNames?: string[]
 }
 
 const BOOK_SELECT = `
@@ -1179,7 +1180,8 @@ export async function searchTags(
 export async function addTag(
   supabase: Client,
   bookId: string,
-  rawTagName: string
+  rawTagName: string,
+  category: DbTag['category'] = 'theme'
 ): Promise<DbTag> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
@@ -1195,7 +1197,7 @@ export async function addTag(
       .insert({
         name,
         slug,
-        category: 'theme',
+        category,
       })
       .select('*')
       .maybeSingle()
@@ -1388,7 +1390,10 @@ async function findOrCreateCatalogBook(
   authorCache: Map<string, string>
 ) {
   const existing = await findCatalogBook(supabase, input, bookCache)
-  if (existing) return { book: existing, created: false }
+  if (existing) {
+    await ensureImportedBookTags(supabase, existing.id, input.tagNames)
+    return { book: existing, created: false }
+  }
 
   const normalizedIsbns = (input.isbns ?? [])
     .map((isbn) => normalizeImportedIsbn(isbn))
@@ -1443,6 +1448,7 @@ async function findOrCreateCatalogBook(
   if (hydrateError) throw hydrateError
 
   const book = mapBookWithAuthors(hydrated)
+  await ensureImportedBookTags(supabase, book.id, input.tagNames)
   cacheImportedBook(bookCache, book, buildBookTitleAuthorKey(input.title, input.authors), normalizedIsbns)
   return { book, created: true }
 }
@@ -1632,10 +1638,32 @@ export async function importCatalogBook(
       ...input,
       title,
       authors: authorNames,
+      tagNames: normalizeImportedTagNames(input.tagNames),
     },
     bookCache,
     authorCache
   )
+}
+
+function normalizeImportedTagNames(input?: string[]) {
+  return Array.from(
+    new Set(
+      (input ?? [])
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )
+  )
+}
+
+async function ensureImportedBookTags(
+  supabase: Client,
+  bookId: string,
+  tagNames?: string[]
+) {
+  const normalized = normalizeImportedTagNames(tagNames)
+  for (const tagName of normalized) {
+    await addTag(supabase, bookId, tagName, 'style')
+  }
 }
 
 async function upsertImportedReviewRecord(

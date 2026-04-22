@@ -1277,6 +1277,7 @@ function CommentNode({
 
   return (
     <div
+      id={`comment-${node.comment.id}`}
       style={{
         padding: 12,
         borderRadius: 14,

@@ -1,3 +1,5 @@
+export type CatalogFormat = 'book' | 'comic' | 'graphic_novel' | 'manga'
+
 export type OpenLibrarySearchResult = {
   source: 'openlibrary'
   sourceId: string
@@ -9,6 +11,7 @@ export type OpenLibrarySearchResult = {
   coverUrl: string | null
   isbns: string[]
   languageCodes: string[]
+  format: CatalogFormat
   openLibraryUrl: string
 }
 
@@ -22,6 +25,7 @@ type OpenLibraryDoc = {
   cover_i?: number
   isbn?: string[]
   language?: string[]
+  subject?: string[]
 }
 
 export function buildOpenLibraryCoverUrl(input: { coverId?: number | null; isbn?: string | null }) {
@@ -53,6 +57,7 @@ export async function searchOpenLibraryBooks(query: string, limit = 12): Promise
       'cover_i',
       'isbn',
       'language',
+      'subject',
     ].join(','),
   })
 
@@ -102,8 +107,73 @@ function mapOpenLibraryDoc(doc: OpenLibraryDoc): OpenLibrarySearchResult | null 
     }),
     isbns,
     languageCodes: dedupeStrings((doc.language ?? []).map((code) => code.trim()).filter(Boolean)),
+    format: classifyCatalogFormat({
+      title,
+      subtitle: doc.subtitle ?? null,
+      subjects: doc.subject ?? [],
+    }),
     openLibraryUrl: `https://openlibrary.org${sourceId}`,
   }
+}
+
+export function catalogFormatLabel(format: CatalogFormat) {
+  switch (format) {
+    case 'comic':
+      return 'Comic'
+    case 'graphic_novel':
+      return 'Graphic Novel'
+    case 'manga':
+      return 'Manga'
+    default:
+      return 'Book'
+  }
+}
+
+export function catalogFormatTags(format: CatalogFormat) {
+  switch (format) {
+    case 'comic':
+      return ['Comic']
+    case 'graphic_novel':
+      return ['Graphic Novel']
+    case 'manga':
+      return ['Manga']
+    default:
+      return []
+  }
+}
+
+function classifyCatalogFormat(input: {
+  title: string
+  subtitle?: string | null
+  subjects?: string[]
+}): CatalogFormat {
+  const haystack = [input.title, input.subtitle ?? '', ...(input.subjects ?? [])]
+    .join(' | ')
+    .toLowerCase()
+
+  if (
+    haystack.includes('manga') ||
+    haystack.includes('shonen') ||
+    haystack.includes('shojo') ||
+    haystack.includes('seinen')
+  ) {
+    return 'manga'
+  }
+
+  if (haystack.includes('graphic novel') || haystack.includes('graphic novels')) {
+    return 'graphic_novel'
+  }
+
+  if (
+    haystack.includes('comic') ||
+    haystack.includes('comics') ||
+    haystack.includes('comic books') ||
+    haystack.includes('strips, etc')
+  ) {
+    return 'comic'
+  }
+
+  return 'book'
 }
 
 function pickPreferredIsbn(isbns: string[]) {

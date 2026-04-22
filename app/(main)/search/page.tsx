@@ -22,7 +22,11 @@ import {
   type DbProfile,
   type DbTag,
 } from '@/lib/db'
-import type { OpenLibrarySearchResult } from '@/lib/openlibrary'
+import {
+  catalogFormatLabel,
+  catalogFormatTags,
+  type OpenLibrarySearchResult,
+} from '@/lib/openlibrary'
 
 type Tab = 'all' | 'books' | 'tags' | 'readers' | 'clubs' | 'threads'
 
@@ -94,6 +98,7 @@ export default function SearchPage() {
         publishedYear: book.publishedYear,
         pageCount: book.pageCount,
         languageCode: book.languageCodes[0] ?? null,
+        tagNames: catalogFormatTags(book.format),
       })
 
       router.push(`/book/${imported.book.id}`)
@@ -142,7 +147,7 @@ export default function SearchPage() {
           <i style={{ color: 'var(--pulp)' }}>anything.</i>
         </h1>
         <p style={{ fontSize: 15, color: 'var(--ink-2)', maxWidth: 640, marginBottom: 20 }}>
-          Search books, authors, moods, readers, clubs, and live threads without leaving the shelf.
+          Search books, comics, manga, authors, moods, readers, clubs, and live threads without leaving the shelf.
         </p>
 
         <div style={{ position: 'relative' }}>
@@ -150,7 +155,7 @@ export default function SearchPage() {
             autoFocus
             value={q}
             onChange={(event) => setQ(event.target.value)}
-            placeholder="books, authors, moods, readers, threads..."
+            placeholder="books, comics, manga, authors, readers, threads..."
             style={{
               width: '100%',
               padding: '18px 20px 18px 52px',
@@ -269,7 +274,7 @@ export default function SearchPage() {
       {showBooks && books.length > 0 && (
         <section style={{ marginBottom: 36 }}>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
-            {q ? `Books (${books.length})` : 'Recent books in catalog'}
+            {q ? `Books, Comics, and Manga (${books.length})` : 'Recent books in catalog'}
           </div>
           <div
             style={{
@@ -332,7 +337,7 @@ export default function SearchPage() {
             }}
           >
             <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              These results come from Open Library so Bookcase feels closer to Fable, Pagebound, or StoryGraph for long-tail search. Import any match and it becomes a normal Bookcase title.
+              These results come from Open Library so Bookcase feels closer to Fable, Pagebound, or StoryGraph for long-tail search. Import any match and it becomes a normal Bookcase title, including comics, graphic novels, and manga.
             </div>
           </div>
           <div
@@ -370,6 +375,20 @@ export default function SearchPage() {
                   <div style={{ fontSize: 12, color: 'var(--ink-3)', minHeight: 18 }}>
                     {book.authors.join(', ') || 'Unknown author'}
                   </div>
+                  {book.format !== 'book' && (
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--pulp)',
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        marginTop: 6,
+                      }}
+                    >
+                      {catalogFormatLabel(book.format)}
+                    </div>
+                  )}
                   <div
                     className="mono"
                     style={{

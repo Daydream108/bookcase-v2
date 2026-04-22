@@ -4,7 +4,7 @@ This is the single source of truth for project status and the next must-have que
 
 ## Current Status
 
-Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, and broader-catalog search/import all read or write through `lib/db.ts`.
+Most of the Supabase wiring is live. The redesign, mobile layout, auth, password recovery, email confirmation resend, search, rating, shelving, reviews, posts, streaks, notifications, clubs, explore, roadmap, Goodreads onboarding, animated bookcase, half-star ratings, thread up/downvotes, nested comment replies, direct bookcase add/remove, moderation reporting, user blocking, live notification preferences, stronger onboarding, broader-catalog search/import, notification filters and deep links, and comic/graphic novel/manga import tagging all read or write through `lib/db.ts`.
 
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
@@ -25,6 +25,20 @@ Latest completed pushes:
 - New-user onboarding is stronger. `/home` has a real checklist, Goodreads import ends with concrete next steps, and the first "add books" step now pushes new users toward `/import`.
 - Reading tracker reliability is tighter. Same-day same-book logs accumulate instead of clobbering, streaks derive from actual session dates, yearly goal sync is timezone-safe, and `/streak` now shows recent sessions back to the reader.
 - Catalog fallback is better. Missing covers now fall back to ISBN-driven Open Library covers so sparse catalog rows look more complete without waiting on a backfill.
+- Notifications are easier to use. `/notifications` now has filter tabs plus real click-through targets for follows, likes, replies, clubs, roadmap items, and thread activity.
+- Broader-catalog imports now classify comic formats. Open Library imports can attach `Comic`, `Graphic Novel`, or `Manga` tags automatically so those titles are searchable and visibly supported in the product instead of being treated as invisible edge cases.
+
+## Need Next
+
+These are the next must-have product gaps after this pass.
+
+1. Moderation inbox and reviewer tools for `content_reports`.
+2. Persist bookcase row layout server-side, including custom row names and device sync.
+3. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
+4. Reading tracker management: edit/delete logged sessions, clearer charts, and stronger history controls.
+5. Bookcase management polish: easier add/remove flow from the `+` slots, plus clearer empty-state guidance.
+6. Notifications polish: per-type filter memory, deep links for every notification variant, and better bulk actions.
+7. Catalog support beyond prose books: comics, manga, graphic novels, omnibus editions, and other visual reading formats should feel first-class everywhere.
 
 ## Immediate Follow-Up
 
@@ -42,9 +56,7 @@ Why this matters:
 
 ## Lower-Priority But Real
 
-- Persist bookcase row config server-side and support custom row names.
 - Down/up-vote button on the home feed card, since voting still only works on the book page.
-- Add an internal moderation inbox or admin workflow for `content_reports`, since storage exists now but there is no reviewer UI yet.
 - Explore grid sizing cleanup.
 - More visible share-copy confirmation.
 - Search caching or full-text search.
