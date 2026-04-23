@@ -30,7 +30,6 @@ import {
   listReviewsForBook,
   listSavedReviewIds,
   logReadingSession,
-  removeTag,
   toggleReviewSave,
   toUiBook,
   toUiUser,
@@ -432,25 +431,6 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   >
                     #{tag.name}
-                    {me && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await removeTag(supabase, id, tag.id)
-                          setTags(await listBookTags(supabase, id))
-                        }}
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          cursor: 'pointer',
-                          color: 'var(--ink-3)',
-                          padding: 0,
-                          lineHeight: 1,
-                        }}
-                      >
-                        x
-                      </button>
-                    )}
                   </span>
                 ))}
                 {me && (
