@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { CatalogBookPickerModal } from '@/components/redesign/CatalogBookPickerModal'
 import { Cover } from '@/components/redesign/Cover'
@@ -29,6 +29,49 @@ export function PostComposer({
   const [err, setErr] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const draftKey = me ? `bookcase:home-post-draft:${me.id}` : null
+
+  useEffect(() => {
+    if (!draftKey || typeof window === 'undefined') return
+
+    try {
+      const raw = window.localStorage.getItem(draftKey)
+      if (!raw) return
+      const draft = JSON.parse(raw) as {
+        title?: string
+        body?: string
+        book?: DbBookWithAuthors | null
+      }
+      setTitle(draft.title ?? '')
+      setBody(draft.body ?? '')
+      setBook(draft.book ?? null)
+    } catch {
+      /* ignore bad drafts */
+    }
+  }, [draftKey])
+
+  useEffect(() => {
+    if (!draftKey || typeof window === 'undefined') return
+
+    const hasDraft = title.trim() || body.trim() || book
+    if (!hasDraft) {
+      window.localStorage.removeItem(draftKey)
+      return
+    }
+
+    try {
+      window.localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          title,
+          body,
+          book,
+        })
+      )
+    } catch {
+      /* ignore local draft failures */
+    }
+  }, [body, book, draftKey, title])
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -43,6 +86,9 @@ export function PostComposer({
       setTitle('')
       setBody('')
       setBook(null)
+      if (draftKey && typeof window !== 'undefined') {
+        window.localStorage.removeItem(draftKey)
+      }
       onPosted?.()
     } catch (nextError: unknown) {
       setErr((nextError as Error).message || 'Could not post')
@@ -75,7 +121,7 @@ export function PostComposer({
           <textarea
             value={body}
             onChange={(event) => setBody(event.target.value)}
-            placeholder="Add more thoughts..."
+            placeholder="Add more thoughts... use @username to mention someone."
             rows={2}
             disabled={!me}
             style={{
@@ -132,6 +178,9 @@ export function PostComposer({
           )}
 
           {err && <div style={{ fontSize: 12, color: 'var(--blush, #c0392b)' }}>{err}</div>}
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            Draft saves on this device until you post it.
+          </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {!book && (
@@ -145,6 +194,21 @@ export function PostComposer({
               </button>
             )}
             <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setTitle('')
+                setBody('')
+                setBook(null)
+                if (draftKey && typeof window !== 'undefined') {
+                  window.localStorage.removeItem(draftKey)
+                }
+              }}
+              disabled={!me || posting}
+            >
+              Clear draft
+            </button>
+            <button
               type="submit"
               className="btn btn-pulp btn-sm"
               style={{ marginLeft: 'auto' }}
@@ -154,6 +218,9 @@ export function PostComposer({
             </button>
           </div>
         </div>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 10 }}>
+        Pick a book, post a thread, and use <b>@username</b> if you want to pull another reader in.
       </div>
 
       {pickerOpen && (

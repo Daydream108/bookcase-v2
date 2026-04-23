@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Icon } from '@/components/redesign/Icon'
+import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   deleteNotifications,
@@ -20,17 +21,18 @@ const typeLabel: Record<string, string> = {
   like: 'liked your review',
   comment: 'commented on your post',
   review_on_book: 'reviewed a book',
-  list_mention: 'mentioned you in a list',
+  list_mention: 'mentioned you',
   club_invite: 'invited you to a club',
   roadmap_status: 'roadmap status changed',
   upvote: 'upvoted your post',
 }
 
-type NotificationFilter = 'all' | 'unread' | 'social' | 'discussions' | 'clubs' | 'updates'
+type NotificationFilter = 'all' | 'unread' | 'mentions' | 'social' | 'discussions' | 'clubs' | 'updates'
 
 const filterLabels: Record<NotificationFilter, string> = {
   all: 'All',
   unread: 'Unread',
+  mentions: 'Mentions',
   social: 'Social',
   discussions: 'Discussions',
   clubs: 'Clubs',
@@ -162,7 +164,7 @@ export default function NotificationsPage() {
     const savedFilter = window.localStorage.getItem(NOTIFICATION_FILTER_STORAGE_KEY)
     if (!savedFilter) return
     if (
-      ['all', 'unread', 'social', 'discussions', 'clubs', 'updates'].includes(savedFilter)
+      ['all', 'unread', 'mentions', 'social', 'discussions', 'clubs', 'updates'].includes(savedFilter)
     ) {
       setFilter(savedFilter as NotificationFilter)
     }
@@ -202,6 +204,7 @@ export default function NotificationsPage() {
   const filterCounts = {
     all: items.length,
     unread: items.filter((item) => !item.is_read).length,
+    mentions: items.filter((item) => matchesFilter(item, 'mentions')).length,
     social: items.filter((item) => matchesFilter(item, 'social')).length,
     discussions: items.filter((item) => matchesFilter(item, 'discussions')).length,
     clubs: items.filter((item) => matchesFilter(item, 'clubs')).length,
@@ -290,7 +293,7 @@ export default function NotificationsPage() {
       {!loading && items.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div className="tabs" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
-            {(['all', 'unread', 'social', 'discussions', 'clubs', 'updates'] as NotificationFilter[]).map(
+            {(['all', 'unread', 'mentions', 'social', 'discussions', 'clubs', 'updates'] as NotificationFilter[]).map(
               (item) => (
                 <button
                   key={item}
@@ -317,15 +320,16 @@ export default function NotificationsPage() {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>Loading...</div>
       ) : visibleItems.length === 0 ? (
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
-          <Icon name="bell" size={28} />
-          <div style={{ marginTop: 12, fontSize: 14 }}>You&apos;re all caught up.</div>
-          <div style={{ fontSize: 12, marginTop: 6 }}>
-            {items.length
-              ? 'Nothing matches this filter right now.'
-              : 'Notifications show up when readers follow, like, or reply to you.'}
-          </div>
-        </div>
+        <StateCard
+          icon="bell"
+          title={items.length ? 'Nothing matches this filter' : "You're all caught up"}
+          body={
+            items.length
+              ? 'Try another filter to see the rest of your activity.'
+              : 'Notifications show up when readers follow, like, reply, or invite you into something.'
+          }
+          compact
+        />
       ) : (
         <div className="card" style={{ padding: 0 }}>
           {visibleItems.map((item, index) => {
@@ -433,14 +437,15 @@ function matchesFilter(item: DbNotification, filter: NotificationFilter) {
   switch (filter) {
     case 'unread':
       return !item.is_read
+    case 'mentions':
+      return item.type === 'list_mention'
     case 'social':
       return item.type === 'follow' || item.type === 'like'
     case 'discussions':
       return (
         item.type === 'comment' ||
         item.type === 'upvote' ||
-        item.type === 'review_on_book' ||
-        item.type === 'list_mention'
+        item.type === 'review_on_book'
       )
     case 'clubs':
       return item.type === 'club_invite'

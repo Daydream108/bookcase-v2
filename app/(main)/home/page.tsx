@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
+import { PostVoteButtons } from '@/components/redesign/PostUpvoteButton'
+import { StateCard } from '@/components/redesign/StateCard'
 import { PostComposer } from '@/components/redesign/home/PostComposer'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -11,6 +13,7 @@ import {
   getOnboardingState,
   getReadingGoal,
   getStreak,
+  listPostVotes,
   listPopularBooks,
   listRecentActivity,
   listRecentBookPosts,
@@ -22,6 +25,7 @@ import {
   type DbOnboardingState,
   type DbProfile,
   type DbReadingGoal,
+  type PostVote,
 } from '@/lib/db'
 
 function getDismissedOnboardingKey(userId: string) {
@@ -36,6 +40,7 @@ export default function HomePage() {
   const supabase = useMemo(() => createClient(), [])
   const [me, setMe] = useState<DbProfile | null>(null)
   const [posts, setPosts] = useState<DbBookPost[]>([])
+  const [postVotes, setPostVotes] = useState<Record<string, PostVote>>({})
   const [activity, setActivity] = useState<DbActivityEvent[]>([])
   const [trending, setTrending] = useState<DbBookCard[]>([])
   const [streak, setStreak] = useState({ current: 0, longest: 0 })
@@ -51,7 +56,12 @@ export default function HomePage() {
       listRecentActivity(supabase, 20),
       listPopularBooks(supabase, 4),
     ])
+    const nextVotes = await listPostVotes(
+      supabase,
+      nextPosts.map((post) => post.id)
+    )
     setPosts(nextPosts)
+    setPostVotes(nextVotes)
     setActivity(nextActivity)
     setTrending(popularBooks)
   }
@@ -140,6 +150,7 @@ export default function HomePage() {
   const visibleOnboardingSteps = onboardingSteps.filter(
     (step) => !hiddenOnboardingSteps.includes(step.label)
   )
+  const nextOnboardingStep = visibleOnboardingSteps.find((step) => !step.done) ?? null
 
   return (
     <div
@@ -207,7 +218,7 @@ export default function HomePage() {
                   Get started
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-                  Set up your library, profile, and feed.
+                  Import your books, pin the profile bookcase, and log one real session so the app has something to work with.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -224,6 +235,31 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+            {nextOnboardingStep && (
+              <div
+                className="card"
+                style={{
+                  padding: 14,
+                  marginBottom: 14,
+                  background: 'color-mix(in oklab, var(--paper) 88%, white)',
+                }}
+              >
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Best next step
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{nextOnboardingStep.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
+                      {nextOnboardingStep.description}
+                    </div>
+                  </div>
+                  <Link href={nextOnboardingStep.href} className="btn btn-pulp btn-sm">
+                    {nextOnboardingStep.cta}
+                  </Link>
+                </div>
+              </div>
+            )}
             <div style={{ display: 'grid', gap: 10 }}>
               {visibleOnboardingSteps.map((step) => (
                 <div key={step.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
@@ -256,6 +292,20 @@ export default function HomePage() {
                   )}
                 </div>
               ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+              <Link href="/import" className="chip">
+                Import Goodreads
+              </Link>
+              <Link href="/search" className="chip">
+                Search every book
+              </Link>
+              <Link href={me.username ? `/profile/${me.username}` : '/settings'} className="chip">
+                Set up your bookcase
+              </Link>
+              <Link href="/streak" className="chip">
+                Log first session
+              </Link>
             </div>
           </div>
         )}
@@ -297,42 +347,78 @@ export default function HomePage() {
           {loading ? (
             <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>Loading...</div>
           ) : posts.length === 0 ? (
-            <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>
-              {me
-                ? 'Your feed is quiet. Rate a book, follow someone, or start a post.'
-                : 'Nothing yet. Sign in and start the first post.'}
-            </div>
+            <StateCard
+              icon="thread"
+              title={me ? 'Your feed is quiet' : 'Nothing here yet'}
+              body={
+                me
+                  ? 'Rate a book, follow someone, or start a post to wake the feed up.'
+                  : 'Sign in, import a few books, and start the first post.'
+              }
+              actionHref={me ? '/search' : '/login'}
+              actionLabel={me ? 'Find books' : 'Sign in'}
+              compact
+            />
           ) : (
             posts.map((post) => {
               const user = toUiUser(post.profile)
               const book = toUiBook(post.book ?? null)
               return (
-                <Link
+                <div
                   key={post.id}
-                  href={`/book/${post.book_id}`}
                   className="card"
-                  style={{ padding: 16, display: 'flex', gap: 14, alignItems: 'flex-start', textDecoration: 'none', color: 'inherit' }}
+                  style={{ padding: 16, display: 'flex', gap: 14, alignItems: 'flex-start' }}
                 >
-                  {post.book && <Cover book={book} size={56} />}
+                  {post.book && (
+                    <Link href={`/book/${post.book_id}#thread-${post.id}`} style={{ display: 'block' }}>
+                      <Cover book={book} size={56} />
+                    </Link>
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
                       <Avatar user={user} size={18} />
                       <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b>
-                      {post.book && <span>/ on <i>{post.book.title}</i></span>}
+                      {post.book && (
+                        <span>
+                          / on{' '}
+                          <Link href={`/book/${post.book_id}`} style={{ color: 'inherit' }}>
+                            <i>{post.book.title}</i>
+                          </Link>
+                        </span>
+                      )}
                       <span>/ {timeAgo(post.created_at)}</span>
                     </div>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{post.title}</div>
+                    <Link
+                      href={`/book/${post.book_id}#thread-${post.id}`}
+                      style={{ textDecoration: 'none', color: 'inherit' }}
+                    >
+                      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{post.title}</div>
+                    </Link>
                     {post.body && (
-                      <div style={{ fontSize: 13, color: 'var(--ink-2)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                        {post.body}
-                      </div>
+                      <Link
+                        href={`/book/${post.book_id}#thread-${post.id}`}
+                        style={{ textDecoration: 'none', color: 'inherit' }}
+                      >
+                        <div style={{ fontSize: 13, color: 'var(--ink-2)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                          {post.body}
+                        </div>
+                      </Link>
                     )}
-                    <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: 'var(--ink-3)' }}>
-                      <span>Score {post.upvotes}</span>
-                      <span>Replies {post.comment_count ?? 0}</span>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 10, fontSize: 12, color: 'var(--ink-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <PostVoteButtons
+                        postId={post.id}
+                        initialCount={post.upvotes}
+                        initialVote={postVotes[post.id] ?? 0}
+                      />
+                      <Link href={`/book/${post.book_id}#thread-${post.id}`} className="btn btn-ghost btn-sm">
+                        Replies {post.comment_count ?? 0}
+                      </Link>
+                      <Link href={`/book/${post.book_id}#thread-${post.id}`} className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                        Open thread
+                      </Link>
                     </div>
                   </div>
-                </Link>
+                </div>
               )
             })
           )}
@@ -341,10 +427,19 @@ export default function HomePage() {
         <div className="eyebrow" style={{ marginBottom: 12 }}>Recent activity</div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {activity.length === 0 ? (
-            <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
-              {me
-                ? 'No activity yet. Log a session, write a review, or follow someone.'
-                : 'No activity yet.'}
+            <div style={{ padding: 16 }}>
+              <StateCard
+                icon="sparkles"
+                title={me ? 'No activity yet' : 'Nothing to show yet'}
+                body={
+                  me
+                    ? 'Log a session, write a review, or follow someone and your recent activity will land here.'
+                    : 'Sign in and start reading to build your activity history.'
+                }
+                actionHref={me ? '/streak' : '/login'}
+                actionLabel={me ? 'Open tracker' : 'Sign in'}
+                compact
+              />
             </div>
           ) : (
             activity.map((event) => {
@@ -409,42 +504,42 @@ function buildOnboardingSteps(me: DbProfile | null, onboarding: DbOnboardingStat
   return [
     {
       label: 'Add books',
-      description: 'Import Goodreads or save a few books.',
+      description: 'Import Goodreads first, or search Open Library by title, author, series, or ISBN.',
       href: onboarding.hasBooks ? '/search' : '/import',
       cta: onboarding.hasBooks ? 'Add more' : 'Import books',
       done: onboarding.hasBooks,
     },
     {
       label: 'Pin favorites',
-      description: 'Add favorites to the top row of your profile.',
+      description: 'Pin favorites so the top row of your profile bookcase looks finished.',
       href: `/profile/${me.username ?? ''}`,
       cta: 'Open profile',
       done: onboarding.favoritesCount > 0,
     },
     {
       label: 'Follow a reader',
-      description: 'Follow people to fill your feed.',
+      description: 'Follow a few readers so home stops feeling empty.',
       href: '/search',
       cta: 'Find readers',
       done: onboarding.followingCount > 0,
     },
     {
       label: 'Join a club',
-      description: 'Join a group reading the same book.',
+      description: 'Join one club so there is somewhere to talk about what you are reading.',
       href: '/clubs',
       cta: 'Browse clubs',
       done: onboarding.clubsCount > 0,
     },
     {
       label: 'Log a session',
-      description: 'Log a session to start your streak.',
+      description: 'A streak starts once you log one real reading session.',
       href: '/streak',
       cta: 'Open tracker',
       done: onboarding.sessionsCount > 0,
     },
     {
       label: 'Write a review',
-      description: 'Rate a book and post a short review.',
+      description: 'Use half-stars and a short review to wake up your profile and feed.',
       href: '/search',
       cta: 'Pick a book',
       done: onboarding.reviewsCount > 0,

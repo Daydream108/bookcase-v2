@@ -28,6 +28,13 @@ type OpenLibraryDoc = {
   subject?: string[]
 }
 
+const OPEN_LIBRARY_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000
+const openLibrarySearchCache = new Map<
+  string,
+  { expiresAt: number; results: OpenLibrarySearchResult[] }
+>()
+const openLibrarySearchInflight = new Map<string, Promise<OpenLibrarySearchResult[]>>()
+
 export function buildOpenLibraryCoverUrl(input: { coverId?: number | null; isbn?: string | null }) {
   if (input.coverId) {
     return `https://covers.openlibrary.org/b/id/${input.coverId}-L.jpg?default=false`
@@ -43,6 +50,38 @@ export function buildOpenLibraryCoverUrl(input: { coverId?: number | null; isbn?
 export async function searchOpenLibraryBooks(query: string, limit = 12): Promise<OpenLibrarySearchResult[]> {
   const trimmed = query.trim()
   if (!trimmed) return []
+
+  const cacheKey = `${normalizeCatalogSearchValue(trimmed)}::${clamp(limit, 1, 120)}`
+  const cached = openLibrarySearchCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.results
+  }
+
+  const inFlight = openLibrarySearchInflight.get(cacheKey)
+  if (inFlight) {
+    return inFlight
+  }
+
+  const request = searchOpenLibraryBooksUncached(trimmed, limit)
+    .then((results) => {
+      openLibrarySearchCache.set(cacheKey, {
+        expiresAt: Date.now() + OPEN_LIBRARY_SEARCH_CACHE_TTL_MS,
+        results,
+      })
+      return results
+    })
+    .finally(() => {
+      openLibrarySearchInflight.delete(cacheKey)
+    })
+
+  openLibrarySearchInflight.set(cacheKey, request)
+  return request
+}
+
+async function searchOpenLibraryBooksUncached(
+  trimmed: string,
+  limit: number
+): Promise<OpenLibrarySearchResult[]> {
 
   const parsed = splitCatalogSearch(trimmed)
   const perRequestLimit = Math.max(limit, Math.min(limit * 4, 120))

@@ -19,6 +19,7 @@ export type DbBook = {
 export type DbBookWithAuthors = DbBook & {
   authors: { id: string; name: string }[]
   genres: { id: string; name: string }[]
+  tags: DbTag[]
 }
 
 export type DbBookStats = {
@@ -99,6 +100,22 @@ export type DbBookPostComment = {
   upvotes: number
   created_at: string
   profile?: DbProfile | null
+}
+
+export type DbAccountExport = {
+  exported_at: string
+  account: {
+    id: string
+    email: string | null
+  }
+  profile: DbProfile | null
+  notification_preferences: DbNotificationPreferences | null
+  shelves: Array<DbUserBook & { book: DbBookWithAuthors | null }>
+  favorites: DbFavoriteBook[]
+  sessions: DbReadingSession[]
+  reviews: DbReview[]
+  threads: DbBookPost[]
+  blocked_users: DbBlockedUser[]
 }
 
 export type DbReadingSession = {
@@ -311,7 +328,8 @@ export type CatalogBookImportInput = {
 const BOOK_SELECT = `
   id, title, subtitle, cover_url, description, published_year, page_count, isbn,
   book_authors ( authors ( id, name ) ),
-  book_genres ( genres ( id, name ) )
+  book_genres ( genres ( id, name ) ),
+  book_tags ( tags ( id, name, slug, category, created_at ) )
 `
 
 function mapBookWithAuthors(row: any): DbBookWithAuthors {
@@ -326,6 +344,7 @@ function mapBookWithAuthors(row: any): DbBookWithAuthors {
     isbn: row.isbn ?? null,
     authors: (row.book_authors ?? []).map((item: any) => item.authors).filter(Boolean),
     genres: (row.book_genres ?? []).map((item: any) => item.genres).filter(Boolean),
+    tags: (row.book_tags ?? []).map((item: any) => item.tags).filter(Boolean),
   }
 }
 
@@ -425,6 +444,11 @@ const DEFAULT_BOOKCASE_PREFERENCES = {
   row2_custom_name: null,
   row3_custom_name: null,
 } satisfies Omit<DbBookcasePreferences, 'user_id' | 'updated_at'>
+
+function normalizeBookcaseCustomName(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? ''
+  return trimmed ? trimmed.slice(0, 40) : null
+}
 
 function yearBounds(year: number) {
   return {
@@ -893,6 +917,75 @@ async function insertNotification(
   }
 }
 
+const USERNAME_MENTION_REGEX = /(^|[^a-z0-9_])@([a-z0-9_][a-z0-9_.-]{1,29})/gi
+
+function extractMentionedUsernames(...inputs: Array<string | null | undefined>) {
+  const handles = new Set<string>()
+
+  for (const input of inputs) {
+    if (!input) continue
+    for (const match of input.matchAll(USERNAME_MENTION_REGEX)) {
+      const handle = match[2]?.trim().toLowerCase()
+      if (handle) handles.add(handle)
+    }
+  }
+
+  return [...handles]
+}
+
+async function getActorName(supabase: Client, userId: string) {
+  const { data } = await supabase
+    .from('profiles')
+    .select('display_name, username')
+    .eq('id', userId)
+    .maybeSingle()
+
+  return data?.display_name ?? data?.username ?? 'Someone'
+}
+
+async function notifyMentionedUsers(
+  supabase: Client,
+  input: {
+    actorId: string
+    entityType: 'book_post' | 'comment' | 'club'
+    entityId: string
+    message: string
+    texts: Array<string | null | undefined>
+  }
+) {
+  const handles = extractMentionedUsernames(...input.texts)
+  if (!handles.length) return
+
+  const query = handles
+    .map((handle) => `username.ilike.${escapeLikePattern(handle)}`)
+    .join(',')
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .or(query)
+    .limit(handles.length)
+
+  if (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('mention lookup failed:', error.message)
+    }
+    return
+  }
+
+  const mentionedUsers = (data ?? []) as DbProfile[]
+  for (const profile of mentionedUsers) {
+    await insertNotification(supabase, {
+      userId: profile.id,
+      actorId: input.actorId,
+      type: 'list_mention',
+      entityType: input.entityType,
+      entityId: input.entityId,
+      message: input.message,
+    })
+  }
+}
+
 async function syncReadingGoalProgress(
   supabase: Client,
   userId: string,
@@ -1041,6 +1134,60 @@ export async function getNotificationPreferences(
   return getNotificationPreferencesForUser(supabase, user.id)
 }
 
+export async function exportMyAccountData(supabase: Client): Promise<DbAccountExport> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const [profile, notificationPreferences, shelves, favorites, sessions, blocks, reviewsResult, postsResult] =
+    await Promise.all([
+      getCurrentProfile(supabase),
+      getNotificationPreferences(supabase),
+      listShelf(supabase, user.id),
+      listFavorites(supabase, user.id),
+      listRecentSessions(supabase, user.id, 3650),
+      listBlockedUsers(supabase),
+      supabase
+        .from('reviews')
+        .select(`*, profile:profiles!reviews_user_id_fkey ( * )`)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('book_posts')
+        .select(`*, profile:profiles!book_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }),
+    ])
+
+  if (reviewsResult.error) throw reviewsResult.error
+  if (postsResult.error) throw postsResult.error
+
+  const threads = await hydrateBookPostCounts(
+    supabase,
+    (postsResult.data ?? []).map((row: any) =>
+      normalizeBookPost({
+        ...row,
+        book: row.book ? mapBookWithAuthors(row.book) : null,
+      })
+    )
+  )
+
+  return {
+    exported_at: new Date().toISOString(),
+    account: {
+      id: user.id,
+      email: user.email ?? null,
+    },
+    profile,
+    notification_preferences: notificationPreferences,
+    shelves,
+    favorites,
+    sessions,
+    reviews: (reviewsResult.data ?? []) as DbReview[],
+    threads,
+    blocked_users: blocks,
+  }
+}
+
 export async function upsertNotificationPreferences(
   supabase: Client,
   patch: Partial<Omit<DbNotificationPreferences, 'user_id' | 'updated_at'>>
@@ -1130,6 +1277,12 @@ export async function upsertBookcasePreferences(
         ...patch,
         row2_shelf: nextRow2,
         row3_shelf: nextRow3,
+        row2_custom_name: normalizeBookcaseCustomName(
+          patch.row2_custom_name ?? current.preferences?.row2_custom_name
+        ),
+        row3_custom_name: normalizeBookcaseCustomName(
+          patch.row3_custom_name ?? current.preferences?.row3_custom_name
+        ),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' }
@@ -2560,6 +2713,42 @@ export async function createReview(
   return data as DbReview
 }
 
+export async function updateReview(
+  supabase: Client,
+  reviewId: string,
+  input: { rating: number; body?: string; spoiler?: boolean }
+): Promise<DbReview> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
+    .from('reviews')
+    .update({
+      rating: input.rating,
+      body: input.body?.trim() ?? '',
+      contains_spoiler: input.spoiler ?? false,
+    })
+    .eq('id', reviewId)
+    .eq('user_id', user.id)
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return data as DbReview
+}
+
+export async function deleteReview(supabase: Client, reviewId: string) {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { error } = await supabase
+    .from('reviews')
+    .delete()
+    .eq('id', reviewId)
+    .eq('user_id', user.id)
+  if (error) throw error
+}
+
 export async function listSavedReviewIds(
   supabase: Client,
   reviewIds: string[]
@@ -2635,11 +2824,14 @@ export async function createBookPost(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
+  const trimmedTitle = input.title.trim()
+  const trimmedBody = input.body?.trim() || null
+
   const requiredPayload = {
     user_id: user.id,
     book_id: input.bookId,
-    title: input.title.trim(),
-    body: input.body?.trim() || null,
+    title: trimmedTitle,
+    body: trimmedBody,
   }
 
   const preferredPayloads = [
@@ -2663,6 +2855,72 @@ export async function createBookPost(
       .select('*')
       .single()
 
+    if (!error) {
+      const createdPost = normalizeBookPost(data)
+      const actorName = await getActorName(supabase, user.id)
+      await notifyMentionedUsers(supabase, {
+        actorId: user.id,
+        entityType: 'book_post',
+        entityId: createdPost.id,
+        message: `${actorName} mentioned you in "${createdPost.title}"`,
+        texts: [trimmedTitle, trimmedBody],
+      })
+      return createdPost
+    }
+    lastError = error
+
+    if (
+      !isMissingSchemaColumnError(error, 'contains_spoiler') &&
+      !isMissingSchemaColumnError(error, 'post_type')
+    ) {
+      throw error
+    }
+  }
+
+  throw lastError
+}
+
+export async function updateBookPost(
+  supabase: Client,
+  postId: string,
+  input: {
+    title: string
+    body?: string
+    post_type?: DbBookPost['post_type']
+    spoiler?: boolean
+  }
+): Promise<DbBookPost> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const requiredPayload = {
+    title: input.title.trim(),
+    body: input.body?.trim() || null,
+  }
+
+  const preferredPayloads = [
+    {
+      ...requiredPayload,
+      post_type: input.post_type ?? 'discussion',
+      contains_spoiler: input.spoiler ?? false,
+    },
+    {
+      ...requiredPayload,
+      post_type: input.post_type ?? 'discussion',
+    },
+    requiredPayload,
+  ]
+
+  let lastError: unknown = null
+  for (const payload of preferredPayloads) {
+    const { data, error } = await supabase
+      .from('book_posts')
+      .update(payload)
+      .eq('id', postId)
+      .eq('user_id', user.id)
+      .select('*')
+      .single()
+
     if (!error) return normalizeBookPost(data)
     lastError = error
 
@@ -2675,6 +2933,18 @@ export async function createBookPost(
   }
 
   throw lastError
+}
+
+export async function deleteBookPost(supabase: Client, postId: string) {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { error } = await supabase
+    .from('book_posts')
+    .delete()
+    .eq('id', postId)
+    .eq('user_id', user.id)
+  if (error) throw error
 }
 
 export async function listRecentBookPosts(
@@ -2730,12 +3000,13 @@ export async function createComment(
 ): Promise<DbBookPostComment> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
+  const trimmedBody = input.body.trim()
 
   const basePayload = {
     post_id: input.postId,
     user_id: user.id,
     parent_id: input.parentId ?? null,
-    body: input.body.trim(),
+    body: trimmedBody,
   }
 
   const inserted = await supabase
@@ -2767,9 +3038,9 @@ export async function createComment(
     .select('user_id, title')
     .eq('id', input.postId)
     .maybeSingle()
+  const actorName = await getActorName(supabase, user.id)
+
   if (post?.user_id) {
-    const actor = await supabase.from('profiles').select('display_name, username').eq('id', user.id).maybeSingle()
-    const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
     await insertNotification(supabase, {
       userId: post.user_id,
       actorId: user.id,
@@ -2788,12 +3059,6 @@ export async function createComment(
       .maybeSingle()
 
     if (parent?.user_id && parent.user_id !== post?.user_id) {
-      const actor = await supabase
-        .from('profiles')
-        .select('display_name, username')
-        .eq('id', user.id)
-        .maybeSingle()
-      const actorName = actor.data?.display_name ?? actor.data?.username ?? 'Someone'
       await insertNotification(supabase, {
         userId: parent.user_id,
         actorId: user.id,
@@ -2805,7 +3070,80 @@ export async function createComment(
     }
   }
 
+  await notifyMentionedUsers(supabase, {
+    actorId: user.id,
+    entityType: 'comment',
+    entityId: (data as DbBookPostComment).id,
+    message: `${actorName} mentioned you in a comment${post?.title ? ` on "${post.title}"` : ''}`,
+    texts: [trimmedBody],
+  })
+
   return data as DbBookPostComment
+}
+
+export async function updateComment(
+  supabase: Client,
+  commentId: string,
+  input: {
+    body: string
+    spoiler?: boolean
+  }
+): Promise<DbBookPostComment> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data: existing, error: existingError } = await supabase
+    .from('book_post_comments')
+    .select('id, user_id, created_at, contains_spoiler')
+    .eq('id', commentId)
+    .maybeSingle()
+
+  if (existingError) throw existingError
+  if (!existing || existing.user_id !== user.id) {
+    throw new Error('You can only edit your own comment')
+  }
+
+  const createdAt = new Date(existing.created_at).getTime()
+  if (!Number.isFinite(createdAt)) {
+    throw new Error('This comment can no longer be edited')
+  }
+
+  const hoursSinceCreation = (Date.now() - createdAt) / 3_600_000
+  if (hoursSinceCreation > 24) {
+    throw new Error('Comments can only be edited for 24 hours')
+  }
+
+  const preferredPayload = {
+    body: input.body.trim(),
+    contains_spoiler: input.spoiler ?? existing.contains_spoiler ?? false,
+  }
+
+  const updated = await supabase
+    .from('book_post_comments')
+    .update(preferredPayload)
+    .eq('id', commentId)
+    .eq('user_id', user.id)
+    .select('*')
+    .single()
+
+  if (isMissingSchemaColumnError(updated.error, 'contains_spoiler')) {
+    const fallback = await supabase
+      .from('book_post_comments')
+      .update({ body: input.body.trim() })
+      .eq('id', commentId)
+      .eq('user_id', user.id)
+      .select('*')
+      .single()
+
+    if (fallback.error) throw fallback.error
+    return {
+      ...(fallback.data as DbBookPostComment),
+      contains_spoiler: existing.contains_spoiler ?? false,
+    }
+  }
+
+  if (updated.error) throw updated.error
+  return updated.data as DbBookPostComment
 }
 
 export async function deleteComment(supabase: Client, commentId: string) {
@@ -3816,6 +4154,8 @@ export async function postToClub(
 ): Promise<DbClubPost> {
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
+  const trimmedTitle = input.title.trim()
+  const trimmedBody = input.body.trim()
 
   const { data, error } = await supabase
     .from('club_posts')
@@ -3823,14 +4163,87 @@ export async function postToClub(
       club_id: input.clubId,
       user_id: user.id,
       book_id: input.bookId ?? null,
-      title: input.title.trim(),
-      body: input.body.trim(),
+      title: trimmedTitle,
+      body: trimmedBody,
     })
     .select(`*, profile:profiles!club_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
     .single()
 
   if (error) throw error
+  const createdPost = mapClubPost(data)
+  const [actorName, club] = await Promise.all([
+    getActorName(supabase, user.id),
+    supabase.from('clubs').select('name').eq('id', input.clubId).maybeSingle(),
+  ])
+
+  await notifyMentionedUsers(supabase, {
+    actorId: user.id,
+    entityType: 'club',
+    entityId: input.clubId,
+    message: `${actorName} mentioned you in ${club.data?.name ?? 'a club post'}`,
+    texts: [trimmedTitle, trimmedBody],
+  })
+
+  return createdPost
+}
+
+export async function updateClubPost(
+  supabase: Client,
+  postId: string,
+  input: {
+    title: string
+    body: string
+  }
+): Promise<DbClubPost> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
+    .from('club_posts')
+    .update({
+      title: input.title.trim(),
+      body: input.body.trim(),
+    })
+    .eq('id', postId)
+    .eq('user_id', user.id)
+    .select(`*, profile:profiles!club_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
+    .single()
+
+  if (error) throw error
   return mapClubPost(data)
+}
+
+export async function setClubPostPinned(
+  supabase: Client,
+  postId: string,
+  pinned: boolean
+): Promise<DbClubPost> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
+    .from('club_posts')
+    .update({ is_pinned: pinned })
+    .eq('id', postId)
+    .eq('user_id', user.id)
+    .select(`*, profile:profiles!club_posts_user_id_fkey ( * ), book:books ( ${BOOK_SELECT} )`)
+    .single()
+
+  if (error) throw error
+  return mapClubPost(data)
+}
+
+export async function deleteClubPost(supabase: Client, postId: string) {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const { error } = await supabase
+    .from('club_posts')
+    .delete()
+    .eq('id', postId)
+    .eq('user_id', user.id)
+
+  if (error) throw error
 }
 
 export async function listRoadmapFeatures(supabase: Client): Promise<DbRoadmapFeature[]> {
@@ -3966,7 +4379,7 @@ export function toUiBook(
     rating: stats?.avg_rating ?? 0,
     ratings: stats?.rating_count ?? 0,
     mood: [] as string[],
-    genre: book.genres[0]?.name ?? '',
+    genre: book.genres[0]?.name ?? book.tags[0]?.name ?? '',
     pages: book.page_count ?? 0,
     year: book.published_year ?? 0,
     color: `oklch(36% 0.08 ${hashHue(book.id)})`,

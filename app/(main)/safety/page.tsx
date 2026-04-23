@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
+import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   grantModeratorRole,
@@ -249,9 +250,12 @@ export default function SafetyPage() {
         {loading ? (
           <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Loading...</div>
         ) : myReports.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-            You have not submitted any reports yet.
-          </div>
+          <StateCard
+            icon="shield"
+            title="No reports filed"
+            body="If something crosses the line on Bookcase, your submitted reports will show up here."
+            compact
+          />
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {myReports.map((report) => (
@@ -302,9 +306,12 @@ export default function SafetyPage() {
         {loading ? (
           <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Loading...</div>
         ) : blockedUsers.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-            You are not blocking anyone right now.
-          </div>
+          <StateCard
+            icon="user"
+            title="No blocked readers"
+            body="Readers you block will show up here so you can review or undo that decision."
+            compact
+          />
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {blockedUsers.map((entry) => {
@@ -388,9 +395,12 @@ export default function SafetyPage() {
                 {searchingModerators ? (
                   <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Searching readers...</div>
                 ) : moderatorResults.length === 0 ? (
-                  <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-                    No matching readers found who are not already moderators.
-                  </div>
+                  <StateCard
+                    icon="search"
+                    title="No reader matches"
+                    body="Try a different username or display name. Existing moderators are excluded from these results."
+                    compact
+                  />
                 ) : (
                   moderatorResults.map((profile) => {
                     const uiUser = toUiUser(profile)
@@ -428,9 +438,12 @@ export default function SafetyPage() {
             )}
 
             {moderators.length === 0 ? (
-              <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-                No moderators found yet.
-              </div>
+              <StateCard
+                icon="shield"
+                title="No moderators found"
+                body="The first moderator still needs to be added in SQL before in-app moderator management can take over."
+                compact
+              />
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 {moderators.map((entry) => {

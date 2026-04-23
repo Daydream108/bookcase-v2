@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Bookcase — social reading',
+  title: 'Bookcase - social reading',
   description: 'A social reading app for tracking books, reviews, clubs, and streaks.',
 }
 

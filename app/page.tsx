@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
+import { PublicFooter } from '@/components/redesign/PublicFooter'
 import { StarDisplay } from '@/components/redesign/Stars'
 import { books, users } from '@/lib/redesign-data'
 
@@ -371,13 +372,57 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
+
+        <section
+          style={{
+            padding: '0 24px 72px',
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: 1180,
+              margin: '0 auto',
+              padding: 24,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: 16,
+            }}
+          >
+            <FooterFeature
+              title="Open Library search"
+              body="Look up long-tail books, comics, manga, graphic novels, series names, and ISBNs."
+            />
+            <FooterFeature
+              title="Goodreads import"
+              body="Bring over shelves, ratings, reviews, and custom Goodreads lists to skip the empty-account phase."
+            />
+            <FooterFeature
+              title="Built for beta feedback"
+              body="Profiles, clubs, reviews, threads, and safety tools are live so readers can really test the product."
+            />
+          </div>
+        </section>
       </main>
 
-      <footer style={{ borderTop: '1px solid var(--border)', padding: '28px 24px', textAlign: 'center' }}>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-          Bookcase / Terms / Privacy / Roadmap
-        </div>
-      </footer>
+      <PublicFooter />
+    </div>
+  )
+}
+
+function FooterFeature({
+  title,
+  body,
+}: {
+  title: string
+  body: string
+}) {
+  return (
+    <div>
+      <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)', marginBottom: 8 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>{body}</div>
     </div>
   )
 }

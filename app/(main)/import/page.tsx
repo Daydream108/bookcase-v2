@@ -92,8 +92,8 @@ export default function GoodreadsImportPage() {
 
   const headline = fromSignup ? 'Import your Goodreads library.' : 'Import Goodreads.'
   const subcopy = fromSignup
-    ? 'Start with the books, ratings, reviews, and shelves you already have.'
-    : 'Upload your Goodreads CSV and Bookcase will add your books, ratings, reviews, and shelves.'
+    ? 'Start with the books, ratings, reviews, and shelves you already have so your account does not open empty.'
+    : 'Upload your Goodreads CSV and Bookcase will add your books, ratings, reviews, shelves, and custom lists.'
 
   return (
     <div style={{ maxWidth: 1160, margin: '0 auto', padding: '32px 40px 56px' }}>
@@ -126,6 +126,25 @@ export default function GoodreadsImportPage() {
             <p style={{ fontSize: 15, color: 'var(--ink-2)', maxWidth: 720, lineHeight: 1.65 }}>
               {subcopy}
             </p>
+            <div
+              className="card"
+              style={{
+                marginTop: 16,
+                padding: 14,
+                background: 'color-mix(in oklab, var(--paper) 90%, white)',
+                maxWidth: 640,
+              }}
+            >
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)', marginBottom: 8 }}>
+                Fastest path after sign up
+              </div>
+              <div style={{ display: 'grid', gap: 6, fontSize: 13, color: 'var(--ink-2)' }}>
+                <div>1. Import Goodreads if you have it.</div>
+                <div>2. Search Open Library for anything missing, including comics, manga, and graphic novels.</div>
+                <div>3. Pin favorites on your profile bookcase.</div>
+                <div>4. Log your first session so the streak and home feed come alive.</div>
+              </div>
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 18 }}>
               <a
                 href={GOODREADS_EXPORT_URL}
@@ -157,6 +176,7 @@ export default function GoodreadsImportPage() {
               <ImportBullet text="Ratings and review text from Goodreads" />
               <ImportBullet text="Custom Goodreads shelves as private Bookcase lists" />
               <ImportBullet text="Book basics like title, author, ISBN, page count, and publication year" />
+              <ImportBullet text="Comics, manga, and graphic novels import the same way when Goodreads has the data" />
             </div>
           </div>
         </div>
@@ -284,6 +304,12 @@ export default function GoodreadsImportPage() {
                 <Link href="/home" className="btn btn-pulp btn-sm">
                   Go to home
                 </Link>
+                <Link href="/search" className="btn btn-outline btn-sm">
+                  Search more books
+                </Link>
+                <Link href="/home" className="btn btn-outline btn-sm">
+                  Open checklist
+                </Link>
                 <Link href="/streak" className="btn btn-outline btn-sm">
                   Log first session
                 </Link>
@@ -312,10 +338,10 @@ export default function GoodreadsImportPage() {
                   Next up
                 </div>
                 <div style={{ display: 'grid', gap: 8, fontSize: 13, color: 'var(--ink-2)' }}>
-                  <div>1. Open Home to see your checklist.</div>
-                  <div>2. Pin favorite books on your profile.</div>
-                  <div>3. Log a reading session to start your streak.</div>
-                  <div>4. Follow readers or join a club.</div>
+                  <div>1. Open Home to work through the checklist.</div>
+                  <div>2. Search Open Library for anything Goodreads missed.</div>
+                  <div>3. Pin favorite books on your profile bookcase.</div>
+                  <div>4. Log a reading session to start your streak.</div>
                 </div>
               </div>
             </div>

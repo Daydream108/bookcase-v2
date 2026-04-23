@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Cover } from '@/components/redesign/Cover'
 import { ReportButton } from '@/components/redesign/ReportButton'
+import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   createClub,
@@ -27,28 +28,44 @@ export default function ClubsPage() {
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [loadError, setLoadError] = useState('')
 
   const load = async () => {
-    const [profile, rows] = await Promise.all([
-      getCurrentProfile(supabase),
-      listClubs(supabase, 24),
-    ])
-    setMe(profile)
-    setClubs(rows)
-    setLoading(false)
+    try {
+      setLoadError('')
+      const [profile, rows] = await Promise.all([
+        getCurrentProfile(supabase),
+        listClubs(supabase, 24),
+      ])
+      setMe(profile)
+      setClubs(rows)
+    } catch (error) {
+      setClubs([])
+      setLoadError((error as Error).message || 'Could not load clubs right now.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const [profile, rows] = await Promise.all([
-        getCurrentProfile(supabase),
-        listClubs(supabase, 24),
-      ])
-      if (cancelled) return
-      setMe(profile)
-      setClubs(rows)
-      setLoading(false)
+      try {
+        setLoadError('')
+        const [profile, rows] = await Promise.all([
+          getCurrentProfile(supabase),
+          listClubs(supabase, 24),
+        ])
+        if (cancelled) return
+        setMe(profile)
+        setClubs(rows)
+      } catch (error) {
+        if (cancelled) return
+        setClubs([])
+        setLoadError((error as Error).message || 'Could not load clubs right now.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -129,10 +146,37 @@ export default function ClubsPage() {
 
       {loading ? (
         <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>Loading...</div>
+      ) : loadError ? (
+        <StateCard
+          icon="users"
+          title="Clubs could not load"
+          body={loadError}
+          actionHref="/home"
+          actionLabel="Back home"
+        />
       ) : clubs.length === 0 ? (
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
-          <div style={{ fontSize: 14 }}>No clubs yet. Be the first to start one.</div>
-        </div>
+        <StateCard
+          icon="users"
+          title="No clubs yet"
+          body="Start the first public club so new readers have somewhere to gather."
+          action={
+            me ? (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() =>
+                  document.querySelector<HTMLInputElement>('input[placeholder=\"Club name\"]')?.focus()
+                }
+              >
+                Start one
+              </button>
+            ) : (
+              <Link href="/login" className="btn btn-outline btn-sm">
+                Sign in to start one
+              </Link>
+            )
+          }
+        />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
           {clubs.map((club) => {

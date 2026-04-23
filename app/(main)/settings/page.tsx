@@ -2,12 +2,17 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { Avatar } from '@/components/redesign/Avatar'
 import { createClient } from '@/lib/supabase/client'
 import {
+  listBlockedUsers,
+  exportMyAccountData,
   getCurrentProfile,
   getNotificationPreferences,
+  toUiUser,
   updateProfile,
   upsertNotificationPreferences,
+  type DbBlockedUser,
   type DbNotificationPreferences,
   type DbProfile,
 } from '@/lib/db'
@@ -44,33 +49,45 @@ const PREFS_KEY = 'bookcase:prefs'
 export default function SettingsPage() {
   const supabase = useMemo(() => createClient(), [])
   const [me, setMe] = useState<DbProfile | null>(null)
+  const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(true)
 
   const [displayName, setDisplayName] = useState('')
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
   const [location, setLocation] = useState('')
+  const [avatarUrl, setAvatarUrl] = useState('')
   const [localPrefs, setLocalPrefs] = useState<LocalPrefsState>(DEFAULT_LOCAL_PREFS)
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefsState>(
     DEFAULT_NOTIFICATION_PREFS
   )
+  const [blockedUsers, setBlockedUsers] = useState<DbBlockedUser[]>([])
 
   const [saving, setSaving] = useState(false)
   const [prefsSavingKey, setPrefsSavingKey] = useState<string | null>(null)
+  const [exportingData, setExportingData] = useState(false)
   const [toast, setToast] = useState('')
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const profile = await getCurrentProfile(supabase)
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (cancelled) return
       setMe(profile)
+      setEmail(user?.email ?? '')
       if (profile) {
         setDisplayName(profile.display_name ?? '')
         setUsername(profile.username ?? '')
         setBio(profile.bio ?? '')
         setLocation(profile.location ?? '')
-        const prefs = await getNotificationPreferences(supabase)
+        setAvatarUrl(profile.avatar_url ?? '')
+        const [prefs, blocks] = await Promise.all([
+          getNotificationPreferences(supabase),
+          listBlockedUsers(supabase),
+        ])
         if (!cancelled && prefs) {
           setNotificationPrefs({
             notify_follows: prefs.notify_follows,
@@ -81,6 +98,7 @@ export default function SettingsPage() {
             notify_roadmap_updates: prefs.notify_roadmap_updates,
           })
         }
+        if (!cancelled) setBlockedUsers(blocks)
       }
       try {
         const raw = typeof window !== 'undefined' ? localStorage.getItem(PREFS_KEY) : null
@@ -113,7 +131,20 @@ export default function SettingsPage() {
         username: username.trim() || null,
         bio: bio.trim() || null,
         location: location.trim() || null,
+        avatar_url: avatarUrl.trim() || null,
       })
+      setMe((current) =>
+        current
+          ? {
+              ...current,
+              display_name: displayName.trim() || null,
+              username: username.trim() || null,
+              bio: bio.trim() || null,
+              location: location.trim() || null,
+              avatar_url: avatarUrl.trim() || null,
+            }
+          : current
+      )
       flash('Profile saved')
     } catch (err) {
       flash((err as Error).message || 'Could not save')
@@ -159,6 +190,40 @@ export default function SettingsPage() {
     form.submit()
   }
 
+  const copyProfileLink = async () => {
+    if (!me?.username || typeof window === 'undefined') return
+    const profileUrl = `${window.location.origin}/profile/${me.username}`
+    try {
+      await navigator.clipboard.writeText(profileUrl)
+      flash('Profile link copied')
+    } catch {
+      flash('Could not copy profile link')
+    }
+  }
+
+  const downloadData = async () => {
+    setExportingData(true)
+    try {
+      const payload = await exportMyAccountData(supabase)
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `bookcase-data-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      flash('Data export downloaded')
+    } catch (error) {
+      flash((error as Error).message || 'Could not export your data')
+    } finally {
+      setExportingData(false)
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '60px 40px', textAlign: 'center', color: 'var(--ink-3)' }}>
@@ -176,6 +241,16 @@ export default function SettingsPage() {
     )
   }
 
+  const previewProfile: DbProfile = {
+    ...me,
+    display_name: displayName.trim() || me.display_name,
+    username: username.trim() || me.username,
+    bio: bio.trim() || me.bio,
+    location: location.trim() || me.location,
+    avatar_url: avatarUrl.trim() || null,
+  }
+  const previewUser = toUiUser(previewProfile)
+
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 40px' }}>
       <div className="eyebrow" style={{ marginBottom: 10 }}>Reader settings</div>
@@ -184,7 +259,7 @@ export default function SettingsPage() {
       <form onSubmit={saveProfile} className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Profile</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
-          This is what readers see on your profile.
+          This is what readers see on your public profile.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-3)', display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -215,6 +290,18 @@ export default function SettingsPage() {
             />
           </label>
           <label style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--ink-3)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            Avatar image URL
+            <input
+              value={avatarUrl}
+              onChange={(e) => setAvatarUrl(e.target.value)}
+              placeholder="https://..."
+              style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, fontSize: 14 }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+              Paste a direct image URL for now. The whole app will use it anywhere your avatar appears.
+            </span>
+          </label>
+          <label style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--ink-3)', display: 'flex', flexDirection: 'column', gap: 4 }}>
             Bio
             <textarea
               value={bio}
@@ -224,6 +311,26 @@ export default function SettingsPage() {
               style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, resize: 'none', fontFamily: 'inherit', fontSize: 14 }}
             />
           </label>
+          <div
+            className="card"
+            style={{
+              gridColumn: '1 / -1',
+              padding: 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              background: 'color-mix(in oklab, var(--paper) 90%, white)',
+            }}
+          >
+            <Avatar user={previewUser} size={56} />
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{previewUser.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>@{previewUser.handle}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
+                This preview is what readers will see in the feed, comments, and clubs.
+              </div>
+            </div>
+          </div>
           <button type="submit" disabled={saving} className="btn btn-pulp btn-sm" style={{ justifySelf: 'start' }}>
             {saving ? 'Saving...' : 'Save changes'}
           </button>
@@ -233,15 +340,38 @@ export default function SettingsPage() {
 
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Privacy &amp; spoilers</h3>
-        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Spoiler display settings for this device.</p>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
+          Control how the app behaves on this device and see what is public to other readers.
+        </p>
         <Toggle
           label="Blur spoiler content until tapped"
           checked={localPrefs.spoilersBlurred}
           onChange={(v) => updateLocalPrefs({ spoilersBlurred: v })}
         />
-        <p style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 10 }}>
-          Spoiler blur is still local-only. Notification settings below are now live server-side.
-        </p>
+        <div
+          className="card"
+          style={{
+            marginTop: 14,
+            padding: 14,
+            background: 'color-mix(in oklab, var(--paper) 88%, white)',
+          }}
+        >
+          <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)', marginBottom: 8 }}>
+            Public on your profile
+          </div>
+          <div style={{ display: 'grid', gap: 6, fontSize: 13, color: 'var(--ink-2)' }}>
+            <div>Display name, username, bio, and location</div>
+            <div>Favorites, shelves, streak summary, and reading activity</div>
+            <div>Reviews, ratings, and thread posts you publish</div>
+          </div>
+          <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)', margin: '12px 0 8px' }}>
+            Private to your account
+          </div>
+          <div style={{ display: 'grid', gap: 6, fontSize: 13, color: 'var(--ink-2)' }}>
+            <div>Email address and sign-in data</div>
+            <div>Notification preferences and blocked-reader list</div>
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
@@ -297,12 +427,87 @@ export default function SettingsPage() {
         </Link>
       </div>
 
+      <div className="card" style={{ padding: 24, marginBottom: 14 }}>
+        <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Data &amp; safety</h3>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
+          Export what Bookcase knows about your account and manage reader-level safety tools.
+        </p>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 12 }}>
+          {blockedUsers.length} blocked {blockedUsers.length === 1 ? 'reader' : 'readers'} on this account.
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={() => void downloadData()}
+            disabled={exportingData}
+          >
+            {exportingData ? 'Preparing export...' : 'Download my data'}
+          </button>
+          <Link href="/safety" className="btn btn-outline btn-sm">
+            Blocked readers & reports
+          </Link>
+          {me.username && (
+            <Link href={`/profile/${me.username}`} className="btn btn-outline btn-sm">
+              View public profile
+            </Link>
+          )}
+          {me.username && (
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => void copyProfileLink()}>
+              Copy profile link
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+          <Link href="/privacy" className="link-u" style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
+            Privacy policy
+          </Link>
+          <Link href="/terms" className="link-u" style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
+            Terms
+          </Link>
+        </div>
+      </div>
+
       <div className="card" style={{ padding: 24 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Account</h3>
-        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Manage your session.</p>
-        <button type="button" className="btn btn-outline btn-sm" onClick={signOut}>
-          Sign out
-        </button>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
+          Manage your sign-in and account access.
+        </p>
+        <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14 }}>
+          Signed in as <b>{email || 'your account'}</b>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Link href="/forgot-password" className="btn btn-outline btn-sm">
+            Reset password
+          </Link>
+          <button type="button" className="btn btn-outline btn-sm" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
+        <div
+          className="card"
+          style={{
+            marginTop: 16,
+            padding: 14,
+            background: 'color-mix(in oklab, var(--paper) 90%, white)',
+          }}
+        >
+          <div
+            className="mono"
+            style={{
+              fontSize: 10,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--ink-3)',
+              marginBottom: 8,
+            }}
+          >
+            Before wider beta
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+            Self-serve permanent account deletion is not live yet. Download your data first if you need a full record of your account before signing out or asking the team to remove it.
+          </div>
+        </div>
       </div>
     </div>
   )

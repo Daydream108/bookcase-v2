@@ -329,6 +329,8 @@ export function Bookcase({
   storageKey,
   defaultRow2 = 'reading',
   defaultRow3 = 'to_read',
+  row2CustomName,
+  row3CustomName,
   onAddToShelf,
   onRemoveFromShelf,
   onLayoutChange,
@@ -340,6 +342,8 @@ export function Bookcase({
   storageKey?: string | null
   defaultRow2?: ShelfKey
   defaultRow3?: ShelfKey
+  row2CustomName?: string | null
+  row3CustomName?: string | null
   onAddToShelf?: (target: BookcaseShelfTarget) => void
   onRemoveFromShelf?: (bookId: string, target: BookcaseShelfTarget) => Promise<void>
   onLayoutChange?: (layout: { row2: ShelfKey; row3: ShelfKey }) => Promise<void> | void
@@ -401,8 +405,10 @@ export function Bookcase({
   const selectedShelf = useMemo(() => {
     if (!selectedTarget) return null
     if (selectedTarget === 'favorites') return 'Favorites'
+    if (selectedTarget === row2) return row2CustomName?.trim() || SHELF_LABELS[selectedTarget].label
+    if (selectedTarget === row3) return row3CustomName?.trim() || SHELF_LABELS[selectedTarget].label
     return SHELF_LABELS[selectedTarget].label
-  }, [selectedTarget])
+  }, [row2, row2CustomName, row3, row3CustomName, selectedTarget])
 
   const ShelfPicker = ({
     value,
@@ -486,7 +492,7 @@ export function Bookcase({
             onAdd={editable && onAddToShelf ? () => onAddToShelf('favorites') : undefined}
           />
           <ShelfRow
-            label={SHELF_LABELS[row2].label}
+            label={row2CustomName?.trim() || SHELF_LABELS[row2].label}
             note={SHELF_LABELS[row2].note}
             books={row2Books}
             shelfIdx={1}
@@ -509,7 +515,7 @@ export function Bookcase({
             onAdd={editable && onAddToShelf ? () => onAddToShelf(row2) : undefined}
           />
           <ShelfRow
-            label={SHELF_LABELS[row3].label}
+            label={row3CustomName?.trim() || SHELF_LABELS[row3].label}
             note={SHELF_LABELS[row3].note}
             books={row3Books}
             shelfIdx={2}
@@ -649,6 +655,12 @@ export function toShelfBook(row: { book: DbBookWithAuthors | null } | null | und
   if (!row?.book) return null
   const book = row.book
   const author = book.authors?.map((entry) => entry.name).join(', ') || 'Unknown'
+  const labels = Array.from(
+    new Set([
+      ...(book.genres?.map((genre) => genre.name) ?? []),
+      ...(book.tags?.map((tag) => tag.name) ?? []),
+    ])
+  )
 
   return {
     id: book.id,
@@ -658,7 +670,7 @@ export function toShelfBook(row: { book: DbBookWithAuthors | null } | null | und
     color: spineColor(book.id),
     publishedYear: book.published_year ?? null,
     description: book.description ?? null,
-    genres: book.genres?.map((genre) => genre.name) ?? [],
+    genres: labels,
   }
 }
 

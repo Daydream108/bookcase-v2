@@ -18,7 +18,9 @@ import {
   createBookPost,
   createComment,
   createReview,
+  deleteBookPost,
   deleteComment,
+  deleteReview,
   getBookWithStats,
   getCurrentProfile,
   getUserBook,
@@ -33,6 +35,9 @@ import {
   toggleReviewSave,
   toUiBook,
   toUiUser,
+  updateBookPost,
+  updateComment,
+  updateReview,
   upsertUserBook,
   type DbBookCard,
   type DbBookPost,
@@ -53,10 +58,50 @@ type CommentTreeNode = {
   children: CommentTreeNode[]
 }
 
+type ReviewSort = 'newest' | 'highest' | 'liked'
+
 const MAX_REPLY_DEPTH = 2
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function readLocalDraft<T>(key: string | null): T | null {
+  if (!key || typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
+}
+
+function writeLocalDraft(key: string | null, value: unknown) {
+  if (!key || typeof window === 'undefined') return
+
+  if (
+    !value ||
+    (typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.values(value as Record<string, unknown>).every((entry) =>
+        typeof entry === 'string' ? !entry.trim() : !entry
+      ))
+  ) {
+    window.localStorage.removeItem(key)
+    return
+  }
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* ignore local draft failures */
+  }
+}
+
+function clearLocalDraft(key: string | null) {
+  if (!key || typeof window === 'undefined') return
+  window.localStorage.removeItem(key)
 }
 
 export default function BookPage({ params }: { params: Promise<{ id: string }> }) {
@@ -77,7 +122,11 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [replyDrafts, setReplyDrafts] = useState<DraftMap>({})
   const [openComments, setOpenComments] = useState<ToggleMap>({})
   const [replyingTo, setReplyingTo] = useState<Record<string, string | null>>({})
+  const [editingCommentId, setEditingCommentId] = useState<Record<string, string | null>>({})
+  const [editCommentDrafts, setEditCommentDrafts] = useState<DraftMap>({})
+  const [editCommentSpoilers, setEditCommentSpoilers] = useState<Record<string, boolean>>({})
   const [tab, setTab] = useState<'threads' | 'reviews'>('threads')
+  const [reviewSort, setReviewSort] = useState<ReviewSort>('newest')
   const [loading, setLoading] = useState(true)
 
   const [showReview, setShowReview] = useState(false)
@@ -86,6 +135,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [reviewSpoiler, setReviewSpoiler] = useState(false)
 
   const [showThread, setShowThread] = useState(false)
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null)
   const [threadTitle, setThreadTitle] = useState('')
   const [threadBody, setThreadBody] = useState('')
   const [threadSubmitting, setThreadSubmitting] = useState(false)
@@ -98,6 +148,9 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
   const [tagInput, setTagInput] = useState('')
   const [toast, setToast] = useState('')
+  const reviewDraftKey = me ? `bookcase:review-draft:${me.id}:${id}` : null
+  const threadDraftKey =
+    me ? `bookcase:thread-draft:${me.id}:${id}:${editingThreadId ?? 'new'}` : null
 
   useEffect(() => {
     let cancelled = false
@@ -152,6 +205,72 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     setToast(message)
     window.setTimeout(() => setToast(''), 2400)
   }
+
+  const openReviewModal = () => {
+    const existingReview = me ? reviews.find((review) => review.user_id === me.id) ?? null : null
+    const draft = readLocalDraft<{
+      body?: string
+      rating?: number
+      spoiler?: boolean
+    }>(reviewDraftKey)
+    setReviewBody(draft?.body ?? existingReview?.body ?? '')
+    setReviewRating(draft?.rating ?? existingReview?.rating ?? userBook?.rating ?? 0)
+    setReviewSpoiler(draft?.spoiler ?? existingReview?.contains_spoiler ?? false)
+    setShowReview(true)
+  }
+
+  const closeReviewModal = () => {
+    setShowReview(false)
+    setReviewBody('')
+    setReviewRating(0)
+    setReviewSpoiler(false)
+  }
+
+  const openNewThreadModal = () => {
+    const draft = readLocalDraft<{
+      title?: string
+      body?: string
+    }>(me ? `bookcase:thread-draft:${me.id}:${id}:new` : null)
+    setEditingThreadId(null)
+    setThreadTitle(draft?.title ?? '')
+    setThreadBody(draft?.body ?? '')
+    setShowThread(true)
+  }
+
+  const openThreadEditor = (thread: DbBookPost) => {
+    const draft = readLocalDraft<{
+      title?: string
+      body?: string
+    }>(me ? `bookcase:thread-draft:${me.id}:${id}:${thread.id}` : null)
+    setEditingThreadId(thread.id)
+    setThreadTitle(draft?.title ?? thread.title)
+    setThreadBody(draft?.body ?? thread.body ?? '')
+    setShowThread(true)
+  }
+
+  const closeThreadModal = () => {
+    setShowThread(false)
+    setEditingThreadId(null)
+    setThreadTitle('')
+    setThreadBody('')
+  }
+
+  useEffect(() => {
+    if (!showReview) return
+    writeLocalDraft(reviewDraftKey, {
+      body: reviewBody,
+      rating: reviewRating,
+      spoiler: reviewSpoiler,
+    })
+  }, [reviewBody, reviewDraftKey, reviewRating, reviewSpoiler, showReview])
+
+  useEffect(() => {
+    if (!showThread) return
+    writeLocalDraft(threadDraftKey, {
+      title: threadTitle,
+      body: threadBody,
+    })
+  }, [showThread, threadBody, threadDraftKey, threadTitle])
 
   const loadComments = async (postId: string) => {
     const rows = await listPostComments(supabase, postId)
@@ -217,20 +336,31 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       return flash('Add a rating and some text')
     }
 
-    await createReview(supabase, {
-      bookId: id,
-      rating: reviewRating,
-      body: reviewBody,
-      spoiler: reviewSpoiler,
-    })
+    const existingReview = reviews.find((review) => review.user_id === me.id)
+    if (existingReview) {
+      await updateReview(supabase, existingReview.id, {
+        rating: reviewRating,
+        body: reviewBody,
+        spoiler: reviewSpoiler,
+      })
+    } else {
+      await createReview(supabase, {
+        bookId: id,
+        rating: reviewRating,
+        body: reviewBody,
+        spoiler: reviewSpoiler,
+      })
+    }
 
-    setReviewBody('')
-    setReviewRating(0)
-    setReviewSpoiler(false)
-    setShowReview(false)
+    clearLocalDraft(reviewDraftKey)
+    closeReviewModal()
     await refreshReviews()
-    const awarded = await awardProgressBadges(supabase)
-    flash(formatToast('Review posted', awarded))
+    if (existingReview) {
+      flash('Review updated')
+    } else {
+      const awarded = await awardProgressBadges(supabase)
+      flash(formatToast('Review posted', awarded))
+    }
   }
 
   const submitThread = async (event: React.FormEvent) => {
@@ -240,19 +370,25 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
     setThreadSubmitting(true)
     try {
-      await createBookPost(supabase, {
-        bookId: id,
-        title: threadTitle,
-        body: threadBody,
-      })
+      if (editingThreadId) {
+        await updateBookPost(supabase, editingThreadId, {
+          title: threadTitle,
+          body: threadBody,
+        })
+      } else {
+        await createBookPost(supabase, {
+          bookId: id,
+          title: threadTitle,
+          body: threadBody,
+        })
+      }
 
-      setThreadTitle('')
-      setThreadBody('')
-      setShowThread(false)
+      clearLocalDraft(threadDraftKey)
+      closeThreadModal()
       await refreshThreads()
-      flash('Thread posted')
+      flash(editingThreadId ? 'Thread updated' : 'Thread posted')
     } catch (error) {
-      flash(getErrorMessage(error, 'Could not post thread'))
+      flash(getErrorMessage(error, editingThreadId ? 'Could not update thread' : 'Could not post thread'))
     } finally {
       setThreadSubmitting(false)
     }
@@ -297,6 +433,20 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const authorLine = ui.author || 'Unknown'
   const shelf = userBook?.status ?? 'none'
   const myRating = userBook?.rating ?? 0
+  const myReview = me ? reviews.find((review) => review.user_id === me.id) ?? null : null
+  const sortedReviews = useMemo(() => {
+    return [...reviews].sort((left, right) => {
+      if (reviewSort === 'highest') {
+        if (right.rating !== left.rating) return right.rating - left.rating
+        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
+      }
+      if (reviewSort === 'liked') {
+        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
+        if (right.rating !== left.rating) return right.rating - left.rating
+      }
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+    })
+  }, [reviewSort, reviews])
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto' }}>
@@ -489,14 +639,14 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
             <button
               className="btn btn-pulp btn-sm"
               style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}
-              onClick={() => setShowReview(true)}
+              onClick={openReviewModal}
             >
-              Write a review
+              {myReview ? 'Edit your review' : 'Write a review'}
             </button>
             <button
               className="btn btn-ghost btn-sm"
               style={{ width: '100%', justifyContent: 'center', color: 'var(--paper)' }}
-              onClick={() => setShowThread(true)}
+              onClick={openNewThreadModal}
             >
               Start a thread
             </button>
@@ -524,10 +674,10 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       )}
 
       {showReview && (
-        <Modal onClose={() => setShowReview(false)}>
+        <Modal onClose={closeReviewModal}>
           <form onSubmit={submitReview}>
             <div className="eyebrow" style={{ marginBottom: 8 }}>
-              Write a review
+              {myReview ? 'Edit your review' : 'Write a review'}
             </div>
             <h3 className="serif" style={{ fontSize: 26, marginBottom: 14 }}>
               {book.title}
@@ -550,6 +700,9 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 fontFamily: 'inherit',
               }}
             />
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 8 }}>
+              Draft saves on this device until you post or clear it.
+            </div>
             <label
               style={{
                 display: 'flex',
@@ -569,9 +722,21 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
             </label>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>
-                Post review
+                {myReview ? 'Save review' : 'Post review'}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowReview(false)}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  clearLocalDraft(reviewDraftKey)
+                  setReviewBody(myReview?.body ?? '')
+                  setReviewRating(myReview?.rating ?? userBook?.rating ?? 0)
+                  setReviewSpoiler(myReview?.contains_spoiler ?? false)
+                }}
+              >
+                Clear draft
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={closeReviewModal}>
                 Cancel
               </button>
             </div>
@@ -580,10 +745,10 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
       )}
 
       {showThread && (
-        <Modal onClose={() => setShowThread(false)}>
+        <Modal onClose={closeThreadModal}>
           <form onSubmit={submitThread}>
             <div className="eyebrow" style={{ marginBottom: 8 }}>
-              Start a thread
+              {editingThreadId ? 'Edit thread' : 'Start a thread'}
             </div>
             <h3 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>
               {book.title}
@@ -606,7 +771,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               value={threadBody}
               onChange={(event) => setThreadBody(event.target.value)}
               rows={5}
-              placeholder="What do you want to discuss?"
+              placeholder="What do you want to discuss? Use @username to mention someone."
               disabled={threadSubmitting}
               style={{
                 width: '100%',
@@ -618,6 +783,9 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 fontFamily: 'inherit',
               }}
             />
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 8 }}>
+              Draft saves on this device until you post or clear it.
+            </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button
                 type="submit"
@@ -625,9 +793,33 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 disabled={threadSubmitting}
                 style={{ flex: 1, justifyContent: 'center', opacity: threadSubmitting ? 0.7 : 1 }}
               >
-                {threadSubmitting ? 'Posting...' : 'Post thread'}
+                {threadSubmitting
+                  ? editingThreadId
+                    ? 'Saving...'
+                    : 'Posting...'
+                  : editingThreadId
+                  ? 'Save thread'
+                  : 'Post thread'}
               </button>
-              <button type="button" className="btn btn-ghost" disabled={threadSubmitting} onClick={() => setShowThread(false)}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={threadSubmitting}
+                onClick={() => {
+                  clearLocalDraft(threadDraftKey)
+                  if (editingThreadId) {
+                    const existingThread = threads.find((thread) => thread.id === editingThreadId)
+                    setThreadTitle(existingThread?.title ?? '')
+                    setThreadBody(existingThread?.body ?? '')
+                    return
+                  }
+                  setThreadTitle('')
+                  setThreadBody('')
+                }}
+              >
+                Clear draft
+              </button>
+              <button type="button" className="btn btn-ghost" disabled={threadSubmitting} onClick={closeThreadModal}>
                 Cancel
               </button>
             </div>
@@ -809,14 +1001,41 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                         <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b> -{' '}
                         {new Date(thread.created_at).toLocaleDateString()}
                       </div>
-                      {me && me.id !== thread.user_id && (
-                        <ReportButton
-                          entityType="book_post"
-                          entityId={thread.id}
-                          targetUserId={thread.user_id}
-                          compact
-                        />
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {me && me.id === thread.user_id ? (
+                          <>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => openThreadEditor(thread)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: 'var(--pulp-deep)' }}
+                              onClick={async () => {
+                                if (!window.confirm('Delete this thread?')) return
+                                try {
+                                  await deleteBookPost(supabase, thread.id)
+                                  await refreshThreads()
+                                  flash('Thread deleted')
+                                } catch (error) {
+                                  flash(getErrorMessage(error, 'Could not delete thread'))
+                                }
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          me && (
+                            <ReportButton
+                              entityType="book_post"
+                              entityId={thread.id}
+                              targetUserId={thread.user_id}
+                              compact
+                            />
+                          )
+                        )}
+                      </div>
                     </div>
 
                     <div className="serif" style={{ fontSize: 20, lineHeight: 1.2, marginBottom: 6 }}>
@@ -897,21 +1116,58 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                             me={me}
                             replyingTo={replyingTo[thread.id] ?? null}
                             replyDraft={replyDrafts[thread.id] ?? ''}
+                            editingCommentId={editingCommentId[thread.id] ?? null}
+                            editDraft={editCommentDrafts[thread.id] ?? ''}
+                            editSpoiler={editCommentSpoilers[thread.id] ?? false}
                             onChangeReplyDraft={(value) =>
                               setReplyDrafts((current) => ({ ...current, [thread.id]: value }))
+                            }
+                            onChangeEditDraft={(value) =>
+                              setEditCommentDrafts((current) => ({ ...current, [thread.id]: value }))
+                            }
+                            onChangeEditSpoiler={(value) =>
+                              setEditCommentSpoilers((current) => ({ ...current, [thread.id]: value }))
                             }
                             onStartReply={(commentId) => {
                               setReplyingTo((current) => ({ ...current, [thread.id]: commentId }))
                               setReplyDrafts((current) => ({ ...current, [thread.id]: '' }))
                             }}
+                            onStartEdit={(comment) => {
+                              setEditingCommentId((current) => ({ ...current, [thread.id]: comment.id }))
+                              setEditCommentDrafts((current) => ({
+                                ...current,
+                                [thread.id]: comment.body,
+                              }))
+                              setEditCommentSpoilers((current) => ({
+                                ...current,
+                                [thread.id]: comment.contains_spoiler,
+                              }))
+                            }}
                             onCancelReply={() => {
                               setReplyingTo((current) => ({ ...current, [thread.id]: null }))
                               setReplyDrafts((current) => ({ ...current, [thread.id]: '' }))
+                            }}
+                            onCancelEdit={() => {
+                              setEditingCommentId((current) => ({ ...current, [thread.id]: null }))
+                              setEditCommentDrafts((current) => ({ ...current, [thread.id]: '' }))
+                              setEditCommentSpoilers((current) => ({ ...current, [thread.id]: false }))
                             }}
                             onDelete={async (commentId) => {
                               await deleteComment(supabase, commentId)
                               await loadComments(thread.id)
                               await refreshThreads()
+                            }}
+                            onSubmitEdit={async (commentId) => {
+                              const value = (editCommentDrafts[thread.id] ?? '').trim()
+                              if (!value) return
+                              await updateComment(supabase, commentId, {
+                                body: value,
+                                spoiler: editCommentSpoilers[thread.id] ?? false,
+                              })
+                              setEditingCommentId((current) => ({ ...current, [thread.id]: null }))
+                              setEditCommentDrafts((current) => ({ ...current, [thread.id]: '' }))
+                              setEditCommentSpoilers((current) => ({ ...current, [thread.id]: false }))
+                              await loadComments(thread.id)
                             }}
                             onSubmitReply={async (parentId) => {
                               const value = (replyDrafts[thread.id] ?? '').trim()
@@ -953,7 +1209,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                                   [thread.id]: event.target.value,
                                 }))
                               }
-                              placeholder="Add a comment"
+                              placeholder="Add a comment or mention @username"
                               style={{
                                 flex: 1,
                                 padding: '10px 12px',
@@ -990,7 +1246,37 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
 
           {tab === 'reviews' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {reviews.map((review) => {
+              {reviews.length > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 12,
+                      color: 'var(--ink-3)',
+                    }}
+                  >
+                    Sort reviews
+                    <select
+                      value={reviewSort}
+                      onChange={(event) => setReviewSort(event.target.value as ReviewSort)}
+                      style={{
+                        padding: '8px 10px',
+                        border: '1px solid var(--border)',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        background: 'var(--paper)',
+                      }}
+                    >
+                      <option value="newest">Newest</option>
+                      <option value="highest">Highest rated</option>
+                      <option value="liked">Most liked</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              {sortedReviews.map((review) => {
                 const user = toUiUser(review.profile)
                 const saved = savedReviewIds.includes(review.id)
 
@@ -1006,13 +1292,40 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <StarDisplay value={review.rating} size={14} />
-                        {me && me.id !== review.user_id && (
-                          <ReportButton
-                            entityType="review"
-                            entityId={review.id}
-                            targetUserId={review.user_id}
-                            compact
-                          />
+                        {me && me.id === review.user_id ? (
+                          <>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={openReviewModal}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: 'var(--pulp-deep)' }}
+                              onClick={async () => {
+                                if (!window.confirm('Delete your review?')) return
+                                try {
+                                  await deleteReview(supabase, review.id)
+                                  clearLocalDraft(reviewDraftKey)
+                                  closeReviewModal()
+                                  await refreshReviews()
+                                  flash('Review deleted')
+                                } catch (error) {
+                                  flash(getErrorMessage(error, 'Could not delete review'))
+                                }
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          me && (
+                            <ReportButton
+                              entityType="review"
+                              entityId={review.id}
+                              targetUserId={review.user_id}
+                              compact
+                            />
+                          )
                         )}
                       </div>
                     </div>
@@ -1080,7 +1393,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
                 )
               })}
 
-              {reviews.length === 0 && (
+              {sortedReviews.length === 0 && (
                 <div
                   className="card"
                   style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}
@@ -1252,9 +1565,17 @@ function CommentNode({
   me,
   replyingTo,
   replyDraft,
+  editingCommentId,
+  editDraft,
+  editSpoiler,
   onChangeReplyDraft,
+  onChangeEditDraft,
+  onChangeEditSpoiler,
   onStartReply,
+  onStartEdit,
   onCancelReply,
+  onCancelEdit,
+  onSubmitEdit,
   onSubmitReply,
   onDelete,
 }: {
@@ -1264,15 +1585,27 @@ function CommentNode({
   me: DbProfile | null
   replyingTo: string | null
   replyDraft: string
+  editingCommentId: string | null
+  editDraft: string
+  editSpoiler: boolean
   onChangeReplyDraft: (value: string) => void
+  onChangeEditDraft: (value: string) => void
+  onChangeEditSpoiler: (value: boolean) => void
   onStartReply: (commentId: string) => void
+  onStartEdit: (comment: DbBookPostComment) => void
   onCancelReply: () => void
+  onCancelEdit: () => void
+  onSubmitEdit: (commentId: string) => Promise<void>
   onSubmitReply: (parentId: string) => Promise<void>
   onDelete: (commentId: string) => Promise<void>
 }) {
   const commenter = toUiUser(node.comment.profile)
   const canReply = depth < maxDepth - 1
   const isReplying = replyingTo === node.comment.id
+  const isEditing = editingCommentId === node.comment.id
+  const canEdit =
+    me?.id === node.comment.user_id &&
+    Date.now() - new Date(node.comment.created_at).getTime() <= 24 * 60 * 60 * 1000
 
   return (
     <div
@@ -1300,25 +1633,78 @@ function CommentNode({
           />
         )}
         {me?.id === node.comment.user_id && (
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => onDelete(node.comment.id)}
-          >
-            Delete
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {canEdit && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => onStartEdit(node.comment)}
+              >
+                Edit
+              </button>
+            )}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => onDelete(node.comment.id)}
+            >
+              Delete
+            </button>
+          </div>
         )}
       </div>
 
-      <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-        {node.comment.contains_spoiler ? (
-          <Spoiler>{node.comment.body}</Spoiler>
-        ) : (
-          node.comment.body
-        )}
-      </div>
+      {isEditing ? (
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault()
+            await onSubmitEdit(node.comment.id)
+          }}
+          style={{ display: 'grid', gap: 8 }}
+        >
+          <textarea
+            autoFocus
+            value={editDraft}
+            onChange={(event) => onChangeEditDraft(event.target.value)}
+            rows={3}
+            style={{
+              width: '100%',
+              padding: '8px 10px',
+              borderRadius: 10,
+              border: '1px solid var(--border)',
+              fontSize: 13,
+              resize: 'vertical',
+              fontFamily: 'inherit',
+            }}
+          />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+            <input
+              type="checkbox"
+              checked={editSpoiler}
+              onChange={(event) => onChangeEditSpoiler(event.target.checked)}
+            />
+            Contains spoilers
+          </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="submit" className="btn btn-outline btn-sm">
+              Save
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onCancelEdit}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+          {node.comment.contains_spoiler ? (
+            <Spoiler>{node.comment.body}</Spoiler>
+          ) : (
+            node.comment.body
+          )}
+        </div>
+      )}
 
-      {me && canReply && !isReplying && (
+      {me && canReply && !isReplying && !isEditing && (
         <button
           type="button"
           className="btn btn-ghost btn-sm"
@@ -1370,9 +1756,17 @@ function CommentNode({
               me={me}
               replyingTo={replyingTo}
               replyDraft={replyDraft}
+              editingCommentId={editingCommentId}
+              editDraft={editDraft}
+              editSpoiler={editSpoiler}
               onChangeReplyDraft={onChangeReplyDraft}
+              onChangeEditDraft={onChangeEditDraft}
+              onChangeEditSpoiler={onChangeEditSpoiler}
               onStartReply={onStartReply}
+              onStartEdit={onStartEdit}
               onCancelReply={onCancelReply}
+              onCancelEdit={onCancelEdit}
+              onSubmitEdit={onSubmitEdit}
               onSubmitReply={onSubmitReply}
               onDelete={onDelete}
             />

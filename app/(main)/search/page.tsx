@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
+import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   importCatalogBook,
@@ -231,6 +232,22 @@ export default function SearchPage() {
 
       {!q && (
         <>
+          <StateCard
+            icon="search"
+            title="Search everything"
+            body="Search by title, author, series, ISBN, comics, manga, or graphic novels. Open Library fills in the long tail even when Bookcase has not seen the book yet."
+            compact
+            action={
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <Link href="/import" className="btn btn-outline btn-sm">
+                  Import Goodreads
+                </Link>
+                <Link href="/explore" className="btn btn-ghost btn-sm">
+                  Browse popular books
+                </Link>
+              </div>
+            }
+          />
           <div className="eyebrow" style={{ marginBottom: 14 }}>
             Popular searches
           </div>
@@ -265,16 +282,22 @@ export default function SearchPage() {
       )}
 
       {!loading && q && total === 0 && (
-        <div
-          className="card"
-          style={{
-            padding: 28,
-            textAlign: 'center',
-            color: 'var(--ink-3)',
-          }}
-        >
-          Nothing matched that search. Try title plus author, a series name, or an ISBN.
-        </div>
+        <StateCard
+          icon="search"
+          title="No matches yet"
+          body="Try title plus author, a series name, or an ISBN. If the book is obscure, Open Library should still find it once the search terms are tight enough."
+          compact
+          action={
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button type="button" className="chip" onClick={() => setQ(`${q} by`)}>
+                Add author
+              </button>
+              <button type="button" className="chip" onClick={() => setQ(q.replace(/[^0-9Xx-]/g, ''))}>
+                Try ISBN only
+              </button>
+            </div>
+          }
+        />
       )}
 
       {showBooks && catalogBooks.length > 0 && (
@@ -291,7 +314,7 @@ export default function SearchPage() {
             }}
           >
             <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Book results come from Open Library and Bookcase. Open a saved book or import a new one.
+              Book results come from Open Library and Bookcase. Search works for long-tail books, comics, manga, graphic novels, and ISBN lookups, then you can open a saved title or import a new one.
             </div>
           </div>
           <div
@@ -715,9 +738,37 @@ function toLocalCatalogResult(book: DbBookWithAuthors): OpenLibrarySearchResult 
     coverUrl: book.cover_url,
     isbns: book.isbn ? [book.isbn] : [],
     languageCodes: [],
-    format: 'book',
+    format: inferCatalogFormatFromBook(book),
     openLibraryUrl: '',
   }
+}
+
+function inferCatalogFormatFromBook(book: DbBookWithAuthors): OpenLibrarySearchResult['format'] {
+  const labels = [
+    ...book.genres.map((genre) => genre.name),
+    ...book.tags.map((tag) => tag.name),
+  ]
+    .join(' ')
+    .toLowerCase()
+
+  if (
+    labels.includes('manga') ||
+    labels.includes('shonen') ||
+    labels.includes('shojo') ||
+    labels.includes('seinen')
+  ) {
+    return 'manga'
+  }
+
+  if (labels.includes('graphic novel') || labels.includes('graphic novels')) {
+    return 'graphic_novel'
+  }
+
+  if (labels.includes('comic') || labels.includes('comics')) {
+    return 'comic'
+  }
+
+  return 'book'
 }
 
 async function settleSearchResults<T extends readonly unknown[]>(

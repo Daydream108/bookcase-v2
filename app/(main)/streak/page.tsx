@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { CatalogBookPickerModal } from '@/components/redesign/CatalogBookPickerModal'
 import { Cover } from '@/components/redesign/Cover'
+import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   awardProgressBadges,
@@ -471,11 +472,11 @@ export default function StreakPage() {
         </div>
       </div>
 
-      {reading.length > 0 && (
-        <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-          <div className="eyebrow" style={{ marginBottom: 14 }}>
-            Currently reading
-          </div>
+      <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+        <div className="eyebrow" style={{ marginBottom: 14 }}>
+          Currently reading
+        </div>
+        {reading.length > 0 ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 16 }}>
             {reading.map((entry) => {
               if (!entry.book) return null
@@ -499,11 +500,21 @@ export default function StreakPage() {
               )
             })}
           </div>
-        </div>
-      )}
+        ) : (
+          <StateCard
+            icon="book"
+            title="No active book yet"
+            body="Pick a book from search or save one to your reading shelf so your tracker has an anchor."
+            actionHref="/search"
+            actionLabel="Find a book"
+            compact
+          />
+        )}
+      </div>
 
-      {sessions.length > 0 && (
-        <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+      <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+        {sessions.length > 0 ? (
+          <>
           <div
             style={{
               display: 'flex',
@@ -583,25 +594,52 @@ export default function StreakPage() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+          </>
+        ) : (
+          <StateCard
+            icon="flame"
+            title="No sessions logged yet"
+            body="Log your first reading session here and this page will start filling with streaks, history, and progress."
+            action={
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+                Log first session
+              </button>
+            }
+            compact
+          />
+        )}
+      </div>
 
       <div className="card" style={{ padding: 24 }}>
         <div className="eyebrow" style={{ marginBottom: 14 }}>
           Your reading life - last 6 months
         </div>
-        <div className="heatmap" style={{ gridTemplateRows: 'repeat(7, 16px)', gridAutoColumns: '16px', gap: 4 }}>
-          {heatmap.map((level, index) => (
-            <div key={index} className={'cell ' + level} style={{ width: 16, height: 16, borderRadius: 4 }} />
-          ))}
-        </div>
+        {sessions.length > 0 ? (
+          <div className="heatmap" style={{ gridTemplateRows: 'repeat(7, 16px)', gridAutoColumns: '16px', gap: 4 }}>
+            {heatmap.map((level, index) => (
+              <div key={index} className={'cell ' + level} style={{ width: 16, height: 16, borderRadius: 4 }} />
+            ))}
+          </div>
+        ) : (
+          <StateCard
+            icon="calendar"
+            title="Your heatmap starts with one session"
+            body="Once you log a reading day, your recent reading pattern will show up here."
+            compact
+          />
+        )}
       </div>
 
       {!me && (
-        <div className="card" style={{ padding: 20, marginTop: 20, textAlign: 'center' }}>
-          <Link href="/login" className="btn btn-pulp">
-            Sign in to track your streak
-          </Link>
+        <div style={{ marginTop: 20 }}>
+          <StateCard
+            icon="user"
+            title="Sign in to track your streak"
+            body="Your reading history, goals, and streak all save to your account."
+            actionHref="/login"
+            actionLabel="Sign in"
+            compact
+          />
         </div>
       )}
 

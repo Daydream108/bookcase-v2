@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Cover } from '@/components/redesign/Cover'
+import { StateCard } from '@/components/redesign/StateCard'
 import { listPopularBooks, toUiBook, type DbBookCard } from '@/lib/db'
 import { createClient } from '@/lib/supabase/client'
 
@@ -41,15 +42,24 @@ export default function ExplorePage() {
   const supabase = useMemo(() => createClient(), [])
   const [books, setBooks] = useState<DbBookCard[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
 
     ;(async () => {
-      const data = await listPopularBooks(supabase, 24)
-      if (cancelled) return
-      setBooks(data)
-      setLoading(false)
+      try {
+        setError('')
+        const data = await listPopularBooks(supabase, 24)
+        if (cancelled) return
+        setBooks(data)
+      } catch (caughtError) {
+        if (cancelled) return
+        setBooks([])
+        setError(caughtError instanceof Error ? caughtError.message : 'Could not load explore right now.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
 
     return () => {
@@ -90,10 +100,22 @@ export default function ExplorePage() {
         <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
           Loading...
         </div>
+      ) : error ? (
+        <StateCard
+          icon="compass"
+          title="Explore is taking a beat"
+          body={error}
+          actionHref="/search"
+          actionLabel="Search instead"
+        />
       ) : books.length === 0 ? (
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--ink-3)' }}>
-          No books in the catalog yet.
-        </div>
+        <StateCard
+          icon="book"
+          title="Nothing is trending yet"
+          body="Import a few books, rate them, and this page will start to feel alive."
+          actionHref="/search"
+          actionLabel="Find books"
+        />
       ) : (
         <div style={popularGridStyle}>
           {books.slice(0, 12).map((book) => {
