@@ -50,6 +50,7 @@ These are the next must-have product gaps after this pass.
 ### 1. Apply the canonical Supabase SQL
 - Run `supabase/bookcase.sql` in the Supabase SQL Editor.
 - `supabase/bookcase.sql` is the single source of truth for both schema and seed data.
+- The old 324-book Open Library seed dump was removed because it made the SQL editor paste/run path brittle. Missing books should now come through the in-app Open Library import flow.
 
 Why this matters:
 - The repo now contains one canonical Supabase file, but production still needs those latest schema and policy changes applied.
