@@ -25,6 +25,7 @@ import {
 import {
   catalogFormatLabel,
   catalogFormatTags,
+  searchOpenLibraryBooks,
   type OpenLibrarySearchResult,
 } from '@/lib/openlibrary'
 
@@ -58,7 +59,7 @@ export default function SearchPage() {
 
     const timeout = setTimeout(async () => {
       try {
-        const [localBookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await Promise.all([
+        const [localBookRows, tagRows, readerRows, clubRows, threadRows, externalRows] = await settleSearchResults([
           q ? searchBooks(supabase, q, 120) : Promise.resolve([]),
           q ? searchTags(supabase, q, 12) : Promise.resolve([]),
           q ? searchProfiles(supabase, q, 12) : Promise.resolve([]),
@@ -75,7 +76,12 @@ export default function SearchPage() {
         setCatalogBooks(matchCatalogResults(externalRows, localBookRows))
       } catch (error) {
         if (cancelled) return
-        setBroaderSearchError((error as Error).message || 'Could not search Open Library right now.')
+        setTags([])
+        setReaders([])
+        setClubs([])
+        setThreads([])
+        setCatalogBooks([])
+        setBroaderSearchError((error as Error).message || 'Could not search right now.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -285,7 +291,7 @@ export default function SearchPage() {
             }}
           >
             <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Book results come from Open Library. Open a book already in Bookcase or import a new one.
+              Book results come from Open Library and Bookcase. Open a saved book or import a new one.
             </div>
           </div>
           <div
@@ -298,6 +304,7 @@ export default function SearchPage() {
             {catalogBooks.map(({ result: book, localBook }) => {
               const uiBook = toOpenLibraryUiBook(book)
               const isImporting = importingId === book.sourceId
+              const isBookcaseOnly = book.sourceId.startsWith('bookcase:')
 
               return (
                 <div key={book.sourceId} className="card" style={{ padding: 14 }}>
@@ -361,7 +368,7 @@ export default function SearchPage() {
                       marginTop: 6,
                     }}
                   >
-                    Open Library{book.publishedYear ? ` - ${book.publishedYear}` : ''}
+                    {isBookcaseOnly ? 'Bookcase' : 'Open Library'}{book.publishedYear ? ` - ${book.publishedYear}` : ''}
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                     {localBook ? (
@@ -383,14 +390,16 @@ export default function SearchPage() {
                         {isImporting ? 'Importing...' : 'Import book'}
                       </button>
                     )}
-                    <a
-                      href={book.openLibraryUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn btn-outline btn-sm"
-                    >
-                      Source
-                    </a>
+                    {book.openLibraryUrl && (
+                      <a
+                        href={book.openLibraryUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-outline btn-sm"
+                      >
+                        Source
+                      </a>
+                    )}
                   </div>
                 </div>
               )
@@ -598,15 +607,20 @@ async function fetchBroaderCatalog(query: string, limit = 12) {
     q: query,
     limit: String(limit),
   })
-  const response = await fetch(`/api/catalog/search?${params.toString()}`)
 
-  if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(payload?.error || 'Could not search Open Library right now.')
+  try {
+    const response = await fetch(`/api/catalog/search?${params.toString()}`)
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(payload?.error || 'Could not search Open Library right now.')
+    }
+
+    const payload = (await response.json()) as { results?: OpenLibrarySearchResult[] }
+    return payload.results ?? []
+  } catch {
+    return searchOpenLibraryBooks(query, limit)
   }
-
-  const payload = (await response.json()) as { results?: OpenLibrarySearchResult[] }
-  return payload.results ?? []
 }
 
 function matchCatalogResults(
@@ -615,6 +629,7 @@ function matchCatalogResults(
 ): CatalogSearchBook[] {
   const localByIsbn = new Map<string, DbBookWithAuthors>()
   const localByKey = new Map<string, DbBookWithAuthors>()
+  const matchedLocalIds = new Set<string>()
 
   for (const book of localBooks) {
     const normalizedIsbn = normalizeSearchValue(book.isbn)
@@ -628,19 +643,31 @@ function matchCatalogResults(
     }
   }
 
-  return broaderBooks.map((book) => {
+  const broaderMatches = broaderBooks.map((book) => {
     const localByMatchingIsbn =
       book.isbns
         .map((isbn) => localByIsbn.get(normalizeSearchValue(isbn)))
         .find(Boolean) ?? null
     const localByTitleAndAuthor =
       localByKey.get(buildSearchBookKey(book.title, book.authors)) ?? null
+    const localBook = localByMatchingIsbn ?? localByTitleAndAuthor
+
+    if (localBook) matchedLocalIds.add(localBook.id)
 
     return {
       result: book,
-      localBook: localByMatchingIsbn ?? localByTitleAndAuthor,
+      localBook,
     }
   })
+
+  const localOnlyMatches = localBooks
+    .filter((book) => !matchedLocalIds.has(book.id))
+    .map((book) => ({
+      result: toLocalCatalogResult(book),
+      localBook: book,
+    }))
+
+  return [...broaderMatches, ...localOnlyMatches]
 }
 
 function buildSearchBookKey(title: string, authors: string[]) {
@@ -674,6 +701,30 @@ function toOpenLibraryUiBook(book: OpenLibrarySearchResult) {
     year: book.publishedYear ?? 0,
     color: `oklch(36% 0.08 ${hashHue(book.sourceId)})`,
   }
+}
+
+function toLocalCatalogResult(book: DbBookWithAuthors): OpenLibrarySearchResult {
+  return {
+    source: 'openlibrary',
+    sourceId: `bookcase:${book.id}`,
+    title: book.title,
+    subtitle: book.subtitle,
+    authors: book.authors.map((author) => author.name),
+    publishedYear: book.published_year,
+    pageCount: book.page_count,
+    coverUrl: book.cover_url,
+    isbns: book.isbn ? [book.isbn] : [],
+    languageCodes: [],
+    format: 'book',
+    openLibraryUrl: '',
+  }
+}
+
+async function settleSearchResults<T extends readonly unknown[]>(
+  promises: { [K in keyof T]: Promise<T[K]> }
+): Promise<T> {
+  const settled = await Promise.allSettled(promises)
+  return settled.map((result) => (result.status === 'fulfilled' ? result.value : [])) as unknown as T
 }
 
 function hashHue(input: string) {
