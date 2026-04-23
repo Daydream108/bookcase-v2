@@ -820,15 +820,27 @@ create table if not exists book_post_upvotes (
 create index if not exists book_post_upvotes_post_idx on book_post_upvotes (post_id);
 
 create or replace function update_book_post_upvote_count()
-returns trigger language plpgsql as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_post_id uuid;
 begin
-  if TG_OP = 'INSERT' then
-    update book_posts set upvotes = upvotes + new.vote_value where id = new.post_id;
-  elsif TG_OP = 'DELETE' then
-    update book_posts set upvotes = upvotes - old.vote_value where id = old.post_id;
-  elsif TG_OP = 'UPDATE' then
-    update book_posts set upvotes = upvotes - old.vote_value + new.vote_value where id = new.post_id;
-  end if;
+  target_post_id := coalesce(new.post_id, old.post_id);
+
+  update book_posts
+  set upvotes = coalesce(
+    (
+      select sum(vote_value)::int
+      from book_post_upvotes
+      where post_id = target_post_id
+    ),
+    0
+  )
+  where id = target_post_id;
+
   return null;
 end;
 $$;
@@ -837,6 +849,16 @@ drop trigger if exists book_post_upvotes_count on book_post_upvotes;
 create trigger book_post_upvotes_count
   after insert or update or delete on book_post_upvotes
   for each row execute function update_book_post_upvote_count();
+
+update book_posts
+set upvotes = coalesce(
+  (
+    select sum(vote_value)::int
+    from book_post_upvotes
+    where book_post_upvotes.post_id = book_posts.id
+  ),
+  0
+);
 
 -- ============================================================
 -- FAVORITE BOOKS (pinned to profile, max 4)

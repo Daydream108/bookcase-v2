@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { setPostVote, togglePostUpvote, type PostVote } from '@/lib/db'
 
@@ -19,6 +19,12 @@ export function PostUpvoteButton({
   const [upvoted, setUpvoted] = useState(initialUpvoted)
   const [count, setCount] = useState(initialCount)
   const [pending, setPending] = useState(false)
+
+  useEffect(() => {
+    if (pending) return
+    setUpvoted(initialUpvoted)
+    setCount(initialCount)
+  }, [initialCount, initialUpvoted, pending])
 
   const onClick = async (e: React.MouseEvent) => {
     e.preventDefault()
@@ -85,6 +91,12 @@ export function PostVoteButtons({
   const [vote, setVote] = useState<PostVote>(initialVote)
   const [score, setScore] = useState(initialCount)
   const [pending, setPending] = useState(false)
+
+  useEffect(() => {
+    if (pending) return
+    setVote(initialVote)
+    setScore(initialCount)
+  }, [initialCount, initialVote, pending])
 
   const apply = async (direction: 1 | -1) => {
     if (pending) return
