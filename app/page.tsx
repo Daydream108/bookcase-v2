@@ -8,7 +8,15 @@ import { StarDisplay } from '@/components/redesign/Stars'
 import { books, users } from '@/lib/redesign-data'
 
 export default function LandingPage() {
-  const heroBooks = books.slice(0, 6)
+  const floaters = [
+    { book: books.find((book) => book.id === 'hm')!, x: '8%', y: '8%', r: -8, s: 1, d: 0 },
+    { book: books.find((book) => book.id === 'sb')!, x: '72%', y: '4%', r: 6, s: 1.05, d: 0.6 },
+    { book: books.find((book) => book.id === 'pr')!, x: '38%', y: '22%', r: -3, s: 1.18, d: 1.2 },
+    { book: books.find((book) => book.id === 'rd')!, x: '4%', y: '54%', r: 9, s: 0.92, d: 0.3 },
+    { book: books.find((book) => book.id === 'cr')!, x: '65%', y: '48%', r: -5, s: 1, d: 0.9 },
+    { book: books.find((book) => book.id === 'bb')!, x: '30%', y: '66%', r: 4, s: 0.88, d: 1.5 },
+  ]
+  const trendingTape = [...books, ...books].map((book) => book.title.toUpperCase()).join('  /  ')
   const sampleReviews = [
     {
       book: books[0],
@@ -57,7 +65,16 @@ export default function LandingPage() {
   ]
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--paper)', position: 'relative' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--paper)', position: 'relative', overflow: 'hidden' }}>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background:
+            'radial-gradient(ellipse 50% 40% at 10% 0%, var(--pulp-glow), transparent 70%), radial-gradient(ellipse 60% 40% at 90% 100%, oklch(48% 0.09 150 / 0.1), transparent 70%)',
+        }}
+      />
       <header
         style={{
           position: 'sticky',
@@ -123,12 +140,12 @@ export default function LandingPage() {
       </header>
 
       <main>
-        <section style={{ maxWidth: 1180, margin: '0 auto', padding: '72px 24px 56px' }}>
+        <section style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', padding: '72px 24px 40px' }}>
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1fr) minmax(280px, 420px)',
-              gap: 48,
+              gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)',
+              gap: 80,
               alignItems: 'center',
             }}
           >
@@ -154,25 +171,111 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div
-              className="card"
-              style={{
-                padding: 18,
-                borderRadius: 28,
-                background: 'linear-gradient(140deg, var(--paper), var(--pulp-soft))',
-              }}
-            >
-              <div className="eyebrow" style={{ marginBottom: 14, color: 'var(--pulp-deep)' }}>
-                Popular books
+            <div style={{ position: 'relative', height: 540 }}>
+              {floaters.map((floater, index) => (
+                <div
+                  key={floater.book.id}
+                  className="floater"
+                  style={{
+                    position: 'absolute',
+                    left: floater.x,
+                    top: floater.y,
+                    width: 150,
+                    animationDelay: `${floater.d}s`,
+                    zIndex: index === 2 ? 10 : index,
+                    ['--r' as any]: `${floater.r}deg`,
+                  }}
+                >
+                  <div style={{ transform: `rotate(${floater.r}deg) scale(${floater.s})` }}>
+                    <Cover book={floater.book} size={150} />
+                  </div>
+                </div>
+              ))}
+              <div
+                style={{
+                  position: 'absolute',
+                  right: '-4%',
+                  top: '36%',
+                  background: 'var(--paper)',
+                  border: '1px solid var(--border-2)',
+                  borderRadius: 16,
+                  padding: '10px 14px',
+                  boxShadow: 'var(--shadow-md)',
+                  zIndex: 20,
+                  fontSize: 13,
+                  transform: 'rotate(-3deg)',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>14-day streak</div>
+                <div style={{ color: 'var(--ink-3)', fontSize: 11 }}>Log today</div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
-                {heroBooks.map((book) => (
-                  <Cover key={book.id} book={book} size="100%" style={{ width: '100%' }} />
-                ))}
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '-2%',
+                  top: '28%',
+                  background: 'var(--ink)',
+                  color: 'var(--paper)',
+                  borderRadius: 16,
+                  padding: '10px 14px',
+                  boxShadow: 'var(--shadow-lg)',
+                  zIndex: 20,
+                  fontSize: 13,
+                  transform: 'rotate(4deg)',
+                  maxWidth: 190,
+                }}
+              >
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, opacity: 0.65, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Book post
+                </div>
+                <div style={{ marginTop: 4, fontStyle: 'italic', fontFamily: 'var(--font-display)', fontSize: 16, lineHeight: 1.2 }}>
+                  &quot;Need to talk about chapter 12.&quot;
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>324 replies / @avareads</div>
+              </div>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '20%',
+                  bottom: '4%',
+                  background: 'var(--paper)',
+                  border: '1px solid var(--border-2)',
+                  borderRadius: 14,
+                  padding: '8px 12px',
+                  boxShadow: 'var(--shadow-md)',
+                  zIndex: 20,
+                  fontSize: 13,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  transform: 'rotate(-2deg)',
+                }}
+              >
+                <span>4.5</span>
+                <div style={{ color: 'var(--ink-3)', fontSize: 11 }}>2.1k ratings</div>
               </div>
             </div>
           </div>
         </section>
+
+        <div
+          style={{
+            background: 'var(--ink)',
+            color: 'var(--paper)',
+            padding: '18px 0',
+            overflow: 'hidden',
+            borderTop: '1px solid var(--ink)',
+            borderBottom: '1px solid var(--ink)',
+            transform: 'rotate(-1deg)',
+            margin: '36px -8px 44px',
+          }}
+        >
+          <div className="marquee mono" style={{ whiteSpace: 'nowrap', fontSize: 18, letterSpacing: '0.04em', display: 'inline-block' }}>
+            {trendingTape}
+            {'  /  '}
+            {trendingTape}
+          </div>
+        </div>
 
         <section style={{ maxWidth: 1180, margin: '0 auto', padding: '16px 24px 64px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
