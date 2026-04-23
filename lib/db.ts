@@ -357,6 +357,16 @@ function toJsonMap(value: unknown): JsonMap | null {
   return value as JsonMap
 }
 
+function isMissingSchemaColumnError(error: unknown, column: string) {
+  if (!error || typeof error !== 'object') return false
+  const maybeError = error as { code?: string; message?: string; details?: string }
+  const haystack = `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.toLowerCase()
+  return (
+    (maybeError.code === 'PGRST204' || haystack.includes('schema cache')) &&
+    haystack.includes(column.toLowerCase())
+  )
+}
+
 function currentYear() {
   return new Date().getFullYear()
 }
@@ -2614,19 +2624,35 @@ export async function createBookPost(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
-  const { data, error } = await supabase
+  const basePayload = {
+    user_id: user.id,
+    book_id: input.bookId,
+    title: input.title.trim(),
+    body: input.body?.trim() || null,
+    post_type: input.post_type ?? 'discussion',
+  }
+
+  const inserted = await supabase
     .from('book_posts')
     .insert({
-      user_id: user.id,
-      book_id: input.bookId,
-      title: input.title.trim(),
-      body: input.body?.trim() || null,
-      post_type: input.post_type ?? 'discussion',
+      ...basePayload,
       contains_spoiler: input.spoiler ?? false,
     })
     .select('*')
     .single()
 
+  if (isMissingSchemaColumnError(inserted.error, 'contains_spoiler')) {
+    const fallback = await supabase
+      .from('book_posts')
+      .insert(basePayload)
+      .select('*')
+      .single()
+
+    if (fallback.error) throw fallback.error
+    return { ...(fallback.data as DbBookPost), contains_spoiler: false }
+  }
+
+  const { data, error } = inserted
   if (error) throw error
   return data as DbBookPost
 }
@@ -2683,18 +2709,35 @@ export async function createComment(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
-  const { data, error } = await supabase
+  const basePayload = {
+    post_id: input.postId,
+    user_id: user.id,
+    parent_id: input.parentId ?? null,
+    body: input.body.trim(),
+  }
+
+  const inserted = await supabase
     .from('book_post_comments')
     .insert({
-      post_id: input.postId,
-      user_id: user.id,
-      parent_id: input.parentId ?? null,
-      body: input.body.trim(),
+      ...basePayload,
       contains_spoiler: input.spoiler ?? false,
     })
     .select('*')
     .single()
 
+  if (isMissingSchemaColumnError(inserted.error, 'contains_spoiler')) {
+    const fallback = await supabase
+      .from('book_post_comments')
+      .insert(basePayload)
+      .select('*')
+      .single()
+
+    if (fallback.error) throw fallback.error
+    inserted.data = { ...(fallback.data as DbBookPostComment), contains_spoiler: false }
+    inserted.error = null
+  }
+
+  const { data, error } = inserted
   if (error) throw error
 
   const { data: post } = await supabase

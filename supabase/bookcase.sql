@@ -176,6 +176,9 @@ create table if not exists reviews (
   unique (user_id, book_id)
 );
 
+alter table reviews
+  add column if not exists contains_spoiler boolean not null default false;
+
 create index if not exists reviews_user_idx    on reviews (user_id);
 create index if not exists reviews_book_idx    on reviews (book_id);
 create index if not exists reviews_created_idx on reviews (created_at desc);
@@ -764,6 +767,9 @@ create table if not exists book_posts (
   updated_at timestamptz not null default now()
 );
 
+alter table book_posts
+  add column if not exists contains_spoiler boolean not null default false;
+
 create index if not exists book_posts_book_idx on book_posts (book_id, created_at desc);
 create index if not exists book_posts_user_idx on book_posts (user_id);
 
@@ -781,6 +787,9 @@ create table if not exists book_post_comments (
   upvotes    int not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table book_post_comments
+  add column if not exists contains_spoiler boolean not null default false;
 
 create index if not exists book_post_comments_post_idx on book_post_comments (post_id, created_at);
 
