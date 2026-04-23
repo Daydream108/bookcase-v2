@@ -9,6 +9,9 @@ Most of the Supabase wiring is live. The redesign, mobile layout, auth, password
 Latest completed pushes:
 - `eb29b1b` - `ship error pages, half-stars, downvotes, nested replies, bookcase add/remove`
 - `56dc91f` - `ship bookcase redesign, search, and goodreads import`
+- `c068741` - `harden search catalog fallback`
+- `8fccaf3` - `make book tags add only`
+- `d60b37f` - `fix thread vote persistence`
 
 ## What Just Shipped
 
@@ -36,14 +39,18 @@ Latest completed pushes:
 
 ## Need Next
 
-These are the next must-have product gaps after this pass.
+These are the next must-have product gaps before a real beta. This is needs, not nice-to-haves.
 
-1. Apply and verify the latest `supabase/bookcase.sql` in production so synced bookcase layouts and moderator review tools are actually live on the deployed app.
-2. Expand search depth until long-tail catalog coverage feels competitive with Fable, Pagebound, or StoryGraph.
-3. Verify moderator management on production after the SQL lands. The first moderator still needs one manual row insert, then the in-app role management flow should take over cleanly.
-4. Finish bookcase customization beyond stock shelves: custom row names, custom list-backed rows, and richer shelf editing controls.
-5. Catalog support beyond prose books should be verified and polished everywhere: comics, manga, graphic novels, omnibus editions, and other visual reading formats need to feel first-class in every flow.
-6. Demo polish and QA: finish remaining text cleanup, run the live smoke test, and verify every new flow on the real Cloudflare worker.
+1. Apply and verify the latest `supabase/bookcase.sql` in production. This is required for thread vote persistence, synced bookcase layouts, notification preferences, report moderation, and moderator management.
+2. Run a full live smoke test on the deployed Cloudflare Worker. The local build passes, but the actual beta flow still needs sign up, import, search, shelf, rate, review, thread, vote, comment, report, block, notifications, and streak verification.
+3. Confirm search quality after the SQL change. Search should always return Open Library results for long-tail books, comics, manga, graphic novels, ISBNs, and author/title queries, even when the local catalog is tiny.
+4. Add edit/delete controls for a user's own main content. Users need to be able to correct or remove their own reviews and threads; comments already have delete support but should be checked in the live UI.
+5. Finish beta-safe onboarding. New users need a clear path from sign up to importing Goodreads, searching Open Library, saving first books, pinning bookcase favorites, and logging the first session.
+6. Set up the first production moderator row and verify moderator tools. After that, in-app moderator management should handle adding or removing moderators.
+7. Make bookcase customization complete enough for beta. Rows 2 and 3 need reliable saved choices, custom row names, custom/list-backed rows, and obvious add/remove controls.
+8. Verify non-prose catalog support everywhere. Comics, manga, graphic novels, omnibus editions, and visual reading formats need to work in search, import, shelves, reviews, bookcase, and tags without looking like edge cases.
+9. Add empty/error states for every core page. Search, explore, home, profile, notifications, safety, clubs, and streak should never look broken when the user has no data or a request fails.
+10. Add basic account/data controls. Users need a safe way to update profile identity, manage blocked users, manage notification settings, and understand what data is public.
 
 ## Immediate Follow-Up
 
