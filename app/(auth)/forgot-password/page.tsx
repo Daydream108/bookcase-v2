@@ -34,10 +34,10 @@ export default function ForgotPasswordPage() {
 
   return (
     <div>
-      <div className="eyebrow" style={{ marginBottom: 12 }}>Recover your shelf</div>
+      <div className="eyebrow" style={{ marginBottom: 12 }}>Password reset</div>
       <h1 className="display-md" style={{ marginBottom: 10 }}>Reset password.</h1>
       <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 24 }}>
-        We&apos;ll email you a secure link so you can set a new password and get back to tracking.
+        We will email you a secure link to set a new password.
       </p>
 
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@domain.com"
+          placeholder="Enter email"
           style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
         />
 
@@ -73,7 +73,7 @@ export default function ForgotPasswordPage() {
       <div style={{ marginTop: 20, fontSize: 13, color: 'var(--ink-3)' }}>
         Remembered it?{' '}
         <Link href="/login" className="link-u" style={{ color: 'var(--pulp)', fontWeight: 600 }}>
-          Back to sign in -&gt;
+          Back to sign in
         </Link>
       </div>
     </div>

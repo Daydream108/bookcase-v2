@@ -249,12 +249,12 @@ export default function StreakPage() {
   return (
     <div style={{ maxWidth: 980, margin: '0 auto', padding: '32px 40px' }}>
       <div className="eyebrow" style={{ marginBottom: 10 }}>
-        Momentum tracker
+        Reading tracker
       </div>
       <h1 className="display-lg" style={{ marginBottom: 20 }}>
-        Do not break
+        Track your
         <br />
-        <i style={{ color: 'var(--pulp)' }}>the chain.</i>
+        <i style={{ color: 'var(--pulp)' }}>reading.</i>
       </h1>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 20, marginBottom: 30 }}>
@@ -386,7 +386,7 @@ export default function StreakPage() {
             />
 
             <button type="submit" disabled={saving} className="btn btn-pulp" style={{ justifyContent: 'center' }}>
-              {saving ? 'Saving...' : 'Keep the streak alive'}
+              {saving ? 'Saving...' : 'Save session'}
             </button>
 
             {toast && <div style={{ fontSize: 12, color: 'var(--ink-2)', textAlign: 'center' }}>{toast}</div>}
@@ -413,9 +413,9 @@ export default function StreakPage() {
               Yearly goal
             </div>
             <h2 className="serif" style={{ fontSize: 30, lineHeight: 1.05, marginBottom: 10 }}>
-              Read with
+              Set a
               <br />
-              <i style={{ color: 'var(--pulp)' }}>intention.</i>
+              <i style={{ color: 'var(--pulp)' }}>reading goal.</i>
             </h2>
             <p style={{ fontSize: 14, color: 'var(--ink-2)', marginBottom: 18, maxWidth: 420 }}>
               Set a target for books, pages, and minutes. We update the progress bars as you log sessions and finish books.

@@ -170,7 +170,7 @@ export default function SettingsPage() {
   if (!me) {
     return (
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '60px 40px', textAlign: 'center' }}>
-        <h1 className="display-md" style={{ marginBottom: 16 }}>Sign in to tune your settings</h1>
+        <h1 className="display-md" style={{ marginBottom: 16 }}>Sign in to edit settings</h1>
         <Link href="/login" className="btn btn-pulp">Sign in</Link>
       </div>
     )
@@ -179,12 +179,12 @@ export default function SettingsPage() {
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 40px' }}>
       <div className="eyebrow" style={{ marginBottom: 10 }}>Reader settings</div>
-      <h1 className="display-lg" style={{ marginBottom: 30 }}>Make it yours.</h1>
+      <h1 className="display-lg" style={{ marginBottom: 30 }}>Settings.</h1>
 
       <form onSubmit={saveProfile} className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Profile</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
-          The identity readers meet when they land on your shelf.
+          This is what readers see on your profile.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-3)', display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -219,7 +219,7 @@ export default function SettingsPage() {
             <textarea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              placeholder="book twin with nobody yet..."
+              placeholder="What do you like to read?"
               rows={3}
               style={{ padding: 10, border: '1px solid var(--border)', borderRadius: 10, resize: 'none', fontFamily: 'inherit', fontSize: 14 }}
             />
@@ -233,7 +233,7 @@ export default function SettingsPage() {
 
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Privacy &amp; spoilers</h3>
-        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Controls that only affect this device right now.</p>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Spoiler display settings for this device.</p>
         <Toggle
           label="Blur spoiler content until tapped"
           checked={localPrefs.spoilersBlurred}
@@ -247,7 +247,7 @@ export default function SettingsPage() {
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Notifications</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
-          These are saved to your account and now gate notification writes.
+          Choose which notifications you want to receive.
         </p>
         <Toggle
           label="New followers"
@@ -290,7 +290,7 @@ export default function SettingsPage() {
       <div className="card" style={{ padding: 24, marginBottom: 14 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Import library</h3>
         <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>
-          Bring in your Goodreads CSV after signup or anytime later. We map shelf states, ratings, review text, and custom shelves into Bookcase.
+          Upload your Goodreads CSV to add books, ratings, reviews, and shelves.
         </p>
         <Link href="/import" className="btn btn-pulp btn-sm">
           Import Goodreads
@@ -299,7 +299,7 @@ export default function SettingsPage() {
 
       <div className="card" style={{ padding: 24 }}>
         <h3 className="serif" style={{ fontSize: 22, marginBottom: 6 }}>Account</h3>
-        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Email, session, sign out.</p>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 16 }}>Manage your session.</p>
         <button type="button" className="btn btn-outline btn-sm" onClick={signOut}>
           Sign out
         </button>

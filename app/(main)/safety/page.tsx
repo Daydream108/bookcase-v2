@@ -223,12 +223,12 @@ export default function SafetyPage() {
           Safety
         </div>
         <h1 className="display-lg" style={{ marginBottom: 10 }}>
-          Keep the beta
+          Safety tools
           <br />
-          <i style={{ color: 'var(--pulp)' }}>usable and safe.</i>
+          <i style={{ color: 'var(--pulp)' }}>for Bookcase.</i>
         </h1>
         <p style={{ fontSize: 15, color: 'var(--ink-2)', maxWidth: 680 }}>
-          Review your reports, manage blocked readers, and if you have moderator access, work through the current queue without leaving the app.
+          Review reports, manage blocked readers, and handle the moderation queue.
         </p>
       </div>
 
@@ -364,7 +364,7 @@ export default function SafetyPage() {
             </div>
 
             <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.5 }}>
-              Bootstrap the first moderator in SQL once. After that, moderators can add or remove the rest here without leaving the app.
+              Add or remove moderators from this page. The first moderator still has to be added in SQL.
             </div>
 
             <div style={{ marginBottom: 16 }}>

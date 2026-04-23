@@ -78,10 +78,10 @@ export default function SignupPage() {
 
   return (
     <div>
-      <div className="eyebrow" style={{ marginBottom: 12 }}>Start your shelf</div>
+      <div className="eyebrow" style={{ marginBottom: 12 }}>Join Bookcase</div>
       <h1 className="display-md" style={{ marginBottom: 10 }}>Create account.</h1>
       <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 24 }}>
-        Track books, build streaks, find your taste twin.
+        Track books, post reviews, and join clubs.
       </p>
 
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -105,7 +105,7 @@ export default function SignupPage() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@domain.com"
+          placeholder="Enter email"
           style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
         />
 
@@ -151,7 +151,7 @@ export default function SignupPage() {
       <div style={{ marginTop: 20, fontSize: 13, color: 'var(--ink-3)' }}>
         Already have one?{' '}
         <Link href="/login" className="link-u" style={{ color: 'var(--pulp)', fontWeight: 600 }}>
-          Sign in -&gt;
+          Sign in
         </Link>
       </div>
     </div>

@@ -75,7 +75,7 @@ export default function SearchPage() {
         setCatalogBooks(matchCatalogResults(externalRows, localBookRows))
       } catch (error) {
         if (cancelled) return
-        setBroaderSearchError((error as Error).message || 'Could not search the wider catalog right now.')
+        setBroaderSearchError((error as Error).message || 'Could not search Open Library right now.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -145,12 +145,12 @@ export default function SearchPage() {
           Search
         </div>
         <h1 className="display-lg" style={{ marginBottom: 10 }}>
-          Find
+          Search
           <br />
-          <i style={{ color: 'var(--pulp)' }}>anything.</i>
+          <i style={{ color: 'var(--pulp)' }}>Bookcase.</i>
         </h1>
         <p style={{ fontSize: 15, color: 'var(--ink-2)', maxWidth: 640, marginBottom: 20 }}>
-          Search title, author, series, ISBN, comics, manga, readers, clubs, and live threads without leaving the shelf.
+          Find books, authors, comics, manga, readers, clubs, and posts.
         </p>
 
         <div style={{ position: 'relative' }}>
@@ -201,7 +201,7 @@ export default function SearchPage() {
           {[
             { id: 'all' as const, label: 'All', n: total },
             { id: 'books' as const, label: 'Books', n: counts.books },
-            { id: 'tags' as const, label: 'Vibes', n: counts.tags },
+            { id: 'tags' as const, label: 'Tags', n: counts.tags },
             { id: 'readers' as const, label: 'Readers', n: counts.readers },
             { id: 'clubs' as const, label: 'Clubs', n: counts.clubs },
             { id: 'threads' as const, label: 'Threads', n: counts.threads },
@@ -226,18 +226,18 @@ export default function SearchPage() {
       {!q && (
         <>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
-            Trending searches
+            Popular searches
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 30 }}>
             {[
-              'dark academia',
-              'hail mary',
-              'unreliable narrators',
-              'lyrical fantasy',
-              'sci-fi',
-              'babel',
-              'donna tartt',
-              'club picks',
+              'Cormac McCarthy',
+              'manga',
+              'romance',
+              'Stephen King',
+              'graphic novels',
+              'book clubs',
+              'fantasy',
+              'comics',
             ].map((term) => (
               <button
                 key={term}
@@ -285,7 +285,7 @@ export default function SearchPage() {
             }}
           >
             <div style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Books now come straight from Open Library so search feels like a real long-tail catalog instead of a small local subset. If a result is already in Bookcase, you can open it directly. If it is not, you can import it in one tap.
+              Book results come from Open Library. Open a book already in Bookcase or import a new one.
             </div>
           </div>
           <div
@@ -402,7 +402,7 @@ export default function SearchPage() {
       {showTags && tags.length > 0 && (
         <section style={{ marginBottom: 36 }}>
           <div className="eyebrow" style={{ marginBottom: 14 }}>
-            Vibes and tags ({tags.length})
+            Tags ({tags.length})
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
             {tags.map((tag) => (
@@ -602,7 +602,7 @@ async function fetchBroaderCatalog(query: string, limit = 12) {
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(payload?.error || 'Could not search the wider catalog right now.')
+    throw new Error(payload?.error || 'Could not search Open Library right now.')
   }
 
   const payload = (await response.json()) as { results?: OpenLibrarySearchResult[] }

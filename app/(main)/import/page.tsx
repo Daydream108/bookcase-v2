@@ -90,10 +90,10 @@ export default function GoodreadsImportPage() {
     }
   }
 
-  const headline = fromSignup ? 'Bring your Goodreads life over.' : 'Import your Goodreads shelves.'
+  const headline = fromSignup ? 'Import your Goodreads library.' : 'Import Goodreads.'
   const subcopy = fromSignup
-    ? 'Your account is ready. Start with the books, ratings, reviews, and custom shelves you already built elsewhere.'
-    : 'Upload the Goodreads CSV export and we will map it into Bookcase without flooding your feed with fake activity.'
+    ? 'Start with the books, ratings, reviews, and shelves you already have.'
+    : 'Upload your Goodreads CSV and Bookcase will add your books, ratings, reviews, and shelves.'
 
   return (
     <div style={{ maxWidth: 1160, margin: '0 auto', padding: '32px 40px 56px' }}>
@@ -165,9 +165,9 @@ export default function GoodreadsImportPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18, alignItems: 'start' }}>
         <div className="card" style={{ padding: 24 }}>
           <div className="eyebrow" style={{ marginBottom: 8 }}>Upload</div>
-          <h2 className="serif" style={{ fontSize: 28, marginBottom: 10 }}>Drop in your export.</h2>
+          <h2 className="serif" style={{ fontSize: 28, marginBottom: 10 }}>Upload your CSV.</h2>
           <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 18, lineHeight: 1.6 }}>
-            Goodreads exports a file usually named <code>goodreads_library_export.csv</code>. Upload that here and we will preview it before writing anything.
+            Goodreads exports a file usually named <code>goodreads_library_export.csv</code>. Upload it here and review it before importing.
           </p>
 
           <label
@@ -312,10 +312,10 @@ export default function GoodreadsImportPage() {
                   Next up
                 </div>
                 <div style={{ display: 'grid', gap: 8, fontSize: 13, color: 'var(--ink-2)' }}>
-                  <div>1. Open Home to see the onboarding checklist and your first recommendations.</div>
-                  <div>2. Pin favorites on your profile so the bookcase looks alive right away.</div>
-                  <div>3. Log a reading session to start a trustworthy streak and tracker history.</div>
-                  <div>4. Follow readers or join a club so the feed fills with real activity.</div>
+                  <div>1. Open Home to see your checklist.</div>
+                  <div>2. Pin favorite books on your profile.</div>
+                  <div>3. Log a reading session to start your streak.</div>
+                  <div>4. Follow readers or join a club.</div>
                 </div>
               </div>
             </div>

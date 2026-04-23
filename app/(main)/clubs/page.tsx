@@ -65,7 +65,7 @@ export default function ClubsPage() {
             <i style={{ color: 'var(--pulp)' }}>with someone.</i>
           </h1>
           <p style={{ fontSize: 16, color: 'var(--ink-2)', maxWidth: 620, marginTop: 18 }}>
-            Small focused reading groups with shared progress. Join a public room, or start your own and turn a solo read into a shared ritual.
+            Join a public club or start one for a book you want to read with others.
           </p>
         </div>
 
@@ -108,7 +108,7 @@ export default function ClubsPage() {
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="What kind of readers is this for?"
+                placeholder="What is this club about?"
                 rows={4}
                 style={{ padding: '11px 12px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
               />
@@ -119,7 +119,7 @@ export default function ClubsPage() {
             </form>
           ) : (
             <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-              Sign in first, then you can open a public club from here.
+              Sign in to start a club.
             </div>
           )}
         </div>

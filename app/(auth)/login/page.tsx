@@ -36,7 +36,7 @@ export default function LoginPage() {
       <div className="eyebrow" style={{ marginBottom: 12 }}>Welcome back</div>
       <h1 className="display-md" style={{ marginBottom: 10 }}>Sign in.</h1>
       <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 24 }}>
-        Pick up where you left off and keep your streak intact.
+        Open your feed, shelves, clubs, and streak.
       </p>
 
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -85,7 +85,7 @@ export default function LoginPage() {
       <div style={{ marginTop: 20, fontSize: 13, color: 'var(--ink-3)' }}>
         New here?{' '}
         <Link href="/signup" className="link-u" style={{ color: 'var(--pulp)', fontWeight: 600 }}>
-          Create an account -&gt;
+          Create an account
         </Link>
       </div>
     </div>

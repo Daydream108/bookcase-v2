@@ -62,7 +62,7 @@ export function PostComposer({
             ref={inputRef}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder={me ? 'what are you reading? drop a hot take...' : 'sign in to post a thread'}
+            placeholder={me ? 'What are you reading?' : 'Sign in to post'}
             disabled={!me}
             style={{
               border: 'none',
@@ -75,7 +75,7 @@ export function PostComposer({
           <textarea
             value={body}
             onChange={(event) => setBody(event.target.value)}
-            placeholder="(optional) more thoughts..."
+            placeholder="Add more thoughts..."
             rows={2}
             disabled={!me}
             style={{
@@ -158,7 +158,7 @@ export function PostComposer({
 
       {pickerOpen && (
         <CatalogBookPickerModal
-          title="Pick a book for this thread"
+          title="Pick a book for this post"
           localActionLabel="Use book"
           onSelect={(selectedBook) => {
             setBook(selectedBook)

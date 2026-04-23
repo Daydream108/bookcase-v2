@@ -7,16 +7,23 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'inherit' }}>
           <div
             style={{
-              width: 32, height: 32, borderRadius: 10,
-              background: 'var(--ink)', color: 'var(--paper)',
-              display: 'grid', placeItems: 'center',
-              fontFamily: 'var(--font-display)', fontSize: 20,
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              background: 'var(--ink)',
+              color: 'var(--paper)',
+              display: 'grid',
+              placeItems: 'center',
+              fontFamily: 'var(--font-display)',
+              fontSize: 20,
               boxShadow: 'inset 0 0 0 2px var(--pulp)',
             }}
           >
             B
           </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, letterSpacing: '-0.02em' }}>Bookcase</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, letterSpacing: '-0.02em' }}>
+            Bookcase
+          </div>
         </Link>
 
         <div style={{ flex: 1, display: 'grid', placeItems: 'center' }}>
@@ -34,13 +41,16 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           borderLeft: '1px solid var(--border)',
         }}
       >
-        <div className="eyebrow" style={{ color: 'var(--pulp-deep)', marginBottom: 14 }}>Readers&apos; corner</div>
+        <div className="eyebrow" style={{ color: 'var(--pulp-deep)', marginBottom: 14 }}>
+          Bookcase
+        </div>
         <h2 className="display-md" style={{ marginBottom: 16 }}>
-          The shelf<br />
-          <i style={{ color: 'var(--pulp)' }}>remembers you.</i>
+          Read with
+          <br />
+          <i style={{ color: 'var(--pulp)' }}>other people.</i>
         </h2>
         <p style={{ fontSize: 16, color: 'var(--ink-2)', lineHeight: 1.55, maxWidth: 420 }}>
-          Streaks, threads, quote highlights, and clubs — everything stays in sync across devices the moment you log in.
+          Track books, post reviews, join clubs, and keep your reading history in one place.
         </p>
       </div>
     </div>

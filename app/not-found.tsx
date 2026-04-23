@@ -22,14 +22,13 @@ export default function NotFound() {
             marginBottom: 18,
           }}
         >
-          404 - off the shelf
+          404
         </div>
         <h1 className="display-lg" style={{ marginBottom: 16 }}>
-          This page isn&apos;t on any of our shelves.
+          This page does not exist.
         </h1>
         <p style={{ fontSize: 16, color: 'var(--ink-2)', lineHeight: 1.5, marginBottom: 28 }}>
-          The link you followed is broken, the book was removed, or the URL has a typo. Pick a
-          direction below and keep reading.
+          The link may be broken or the URL may have a typo.
         </p>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link href="/home" className="btn btn-pulp">
@@ -39,7 +38,7 @@ export default function NotFound() {
             Search books
           </Link>
           <Link href="/explore" className="btn btn-ghost">
-            Browse explore
+            Explore
           </Link>
         </div>
       </div>

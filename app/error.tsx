@@ -35,14 +35,13 @@ export default function GlobalError({
             marginBottom: 18,
           }}
         >
-          Something broke
+          Error
         </div>
         <h1 className="display-lg" style={{ marginBottom: 16 }}>
-          The shelf wobbled.
+          Something went wrong.
         </h1>
         <p style={{ fontSize: 16, color: 'var(--ink-2)', lineHeight: 1.5, marginBottom: 22 }}>
-          We hit an unexpected error rendering this page. Try again, head home, or search for what
-          you were after.
+          Try again, go home, or search for a book.
         </p>
         {error.digest && (
           <div

@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useEffect, useMemo, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
+import { PostComposer } from '@/components/redesign/home/PostComposer'
 import { createClient } from '@/lib/supabase/client'
 import {
   getCurrentProfile,
@@ -22,7 +23,6 @@ import {
   type DbProfile,
   type DbReadingGoal,
 } from '@/lib/db'
-import { PostComposer } from '@/components/redesign/home/PostComposer'
 
 function getDismissedOnboardingKey(userId: string) {
   return `bookcase:onboarding-dismissed:${userId}`
@@ -46,52 +46,48 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
 
   const refresh = async () => {
-    const [p, a, tr] = await Promise.all([
+    const [nextPosts, nextActivity, popularBooks] = await Promise.all([
       listRecentBookPosts(supabase, 12),
       listRecentActivity(supabase, 20),
       listPopularBooks(supabase, 4),
     ])
-    setPosts(p)
-    setActivity(a)
-    setTrending(tr)
+    setPosts(nextPosts)
+    setActivity(nextActivity)
+    setTrending(popularBooks)
   }
 
   useEffect(() => {
     let cancelled = false
+
     ;(async () => {
       const profile = await getCurrentProfile(supabase)
       if (cancelled) return
+
       setMe(profile)
       if (profile) {
-        const [s, g, nextOnboarding] = await Promise.all([
+        const [nextStreak, nextGoal, nextOnboarding] = await Promise.all([
           getStreak(supabase, profile.id),
           getReadingGoal(supabase),
           getOnboardingState(supabase),
         ])
         if (cancelled) return
-        setStreak({ current: s.current_streak ?? 0, longest: s.longest_streak ?? 0 })
-        setGoal(g)
+        setStreak({
+          current: nextStreak.current_streak ?? 0,
+          longest: nextStreak.longest_streak ?? 0,
+        })
+        setGoal(nextGoal)
         setOnboarding(nextOnboarding)
       }
+
       await refresh()
       if (!cancelled) setLoading(false)
     })()
+
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase])
-
-  const greeting = useMemo(() => {
-    const h = new Date().getHours()
-    if (h < 12) return 'Good morning'
-    if (h < 18) return 'Good afternoon'
-    return 'Good evening'
-  }, [])
-
-  const displayName = me?.display_name ?? me?.username ?? 'reader'
-  const onboardingSteps = buildOnboardingSteps(me, onboarding)
-  const visibleOnboardingSteps = onboardingSteps.filter((step) => !hiddenOnboardingSteps.includes(step.label))
 
   useEffect(() => {
     if (!me) {
@@ -111,6 +107,13 @@ export default function HomePage() {
       setHiddenOnboardingSteps([])
     }
   }, [me])
+
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours()
+    if (hour < 12) return 'Good morning'
+    if (hour < 18) return 'Good afternoon'
+    return 'Good evening'
+  }, [])
 
   const hideOnboardingStep = (label: string) => {
     if (!me) return
@@ -132,21 +135,45 @@ export default function HomePage() {
     } catch {}
   }
 
+  const displayName = me?.display_name ?? me?.username ?? 'reader'
+  const onboardingSteps = buildOnboardingSteps(me, onboarding)
+  const visibleOnboardingSteps = onboardingSteps.filter(
+    (step) => !hiddenOnboardingSteps.includes(step.label)
+  )
+
   return (
-    <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 40px', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 340px', gap: 40 }}>
+    <div
+      style={{
+        maxWidth: 1280,
+        margin: '0 auto',
+        padding: '32px 40px',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0,1fr) 340px',
+        gap: 40,
+      }}
+    >
       <main>
-        <div className="card" style={{ padding: 24, marginBottom: 24, background: 'linear-gradient(135deg, var(--paper), var(--pulp-soft))', border: '1px solid var(--pulp)', borderRadius: 24 }}>
+        <div
+          className="card"
+          style={{
+            padding: 24,
+            marginBottom: 24,
+            background: 'linear-gradient(135deg, var(--paper), var(--pulp-soft))',
+            border: '1px solid var(--pulp)',
+            borderRadius: 24,
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div>
               <div className="eyebrow" style={{ color: 'var(--pulp-deep)' }}>
-                {streak.current > 0 ? `${streak.current}-day streak · keep it alive` : 'Start your streak today'}
+                {streak.current > 0 ? `${streak.current}-day streak / log today` : 'Start your streak today'}
               </div>
               <h1 className="display-md" style={{ marginTop: 8 }}>
                 {greeting}, {displayName}.
               </h1>
               <div style={{ fontSize: 14, color: 'var(--ink-2)', marginTop: 8 }}>
                 <Link href="/streak" className="link-u" style={{ color: 'var(--pulp-deep)', fontWeight: 600 }}>
-                  Log today&apos;s session -&gt;
+                  Log today's session
                 </Link>
               </div>
             </div>
@@ -165,12 +192,22 @@ export default function HomePage() {
         </div>
 
         {me && visibleOnboardingSteps.length > 0 && !dismissedOnboarding && (
-          <div className="card" style={{ padding: 20, marginBottom: 20, borderColor: 'color-mix(in oklab, var(--moss) 35%, var(--border))', background: 'linear-gradient(140deg, color-mix(in oklab, var(--moss) 10%, var(--paper)), var(--paper))' }}>
+          <div
+            className="card"
+            style={{
+              padding: 20,
+              marginBottom: 20,
+              borderColor: 'color-mix(in oklab, var(--moss) 35%, var(--border))',
+              background: 'linear-gradient(140deg, color-mix(in oklab, var(--moss) 10%, var(--paper)), var(--paper))',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
               <div>
-                <div className="eyebrow" style={{ color: 'var(--moss)', marginBottom: 6 }}>New shelf checklist</div>
+                <div className="eyebrow" style={{ color: 'var(--moss)', marginBottom: 6 }}>
+                  Get started
+                </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-                  Finish a few foundational steps so your home feed has something real to work with.
+                  Set up your library, profile, and feed.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -192,9 +229,11 @@ export default function HomePage() {
                 <div key={step.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>
-                      {step.done ? 'Done' : 'Next'} · {step.label}
+                      {step.done ? 'Done' : 'Next'} / {step.label}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{step.description}</div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
+                      {step.description}
+                    </div>
                   </div>
                   {step.done ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
@@ -225,11 +264,11 @@ export default function HomePage() {
           <div className="card" style={{ padding: 20, marginBottom: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
               <div>
-                <div className="eyebrow" style={{ marginBottom: 6 }}>This year&apos;s reading goal</div>
+                <div className="eyebrow" style={{ marginBottom: 6 }}>Reading goal</div>
                 <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                   {goal
                     ? `${goal.books_completed}/${goal.book_goal} books, ${goal.pages_completed}/${goal.page_goal} pages, ${goal.minutes_completed}/${goal.minute_goal} minutes`
-                    : 'Set a goal so your progress has something to chase.'}
+                    : 'Set a yearly goal for books, pages, or minutes.'}
                 </div>
               </div>
               <Link href="/streak" className="btn btn-outline btn-sm">
@@ -245,7 +284,7 @@ export default function HomePage() {
               </div>
             ) : (
               <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-                Your streak is live. Add a yearly goal to track the bigger arc too.
+                Goals help make your progress easy to read.
               </div>
             )}
           </div>
@@ -253,44 +292,44 @@ export default function HomePage() {
 
         <PostComposer me={me} onPosted={refresh} />
 
-        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest threads</div>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest posts</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
           {loading ? (
             <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>Loading...</div>
           ) : posts.length === 0 ? (
             <div className="card" style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13 }}>
               {me
-                ? 'Your feed is quiet so far. Rate a book, follow someone, or start the first thread above and this space will wake up fast.'
-                : 'Nothing yet. Sign in and start the first thread.'}
+                ? 'Your feed is quiet. Rate a book, follow someone, or start a post.'
+                : 'Nothing yet. Sign in and start the first post.'}
             </div>
           ) : (
-            posts.map((p) => {
-              const u = toUiUser(p.profile)
-              const b = toUiBook(p.book ?? null)
+            posts.map((post) => {
+              const user = toUiUser(post.profile)
+              const book = toUiBook(post.book ?? null)
               return (
                 <Link
-                  key={p.id}
-                  href={`/book/${p.book_id}`}
+                  key={post.id}
+                  href={`/book/${post.book_id}`}
                   className="card"
                   style={{ padding: 16, display: 'flex', gap: 14, alignItems: 'flex-start', textDecoration: 'none', color: 'inherit' }}
                 >
-                  {p.book && <Cover book={b} size={56} />}
+                  {post.book && <Cover book={book} size={56} />}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <Avatar user={u} size={18} />
-                      <b style={{ color: 'var(--ink-2)' }}>@{u.handle}</b>
-                      {p.book && <span>· on <i>{p.book.title}</i></span>}
-                      <span>· {timeAgo(p.created_at)}</span>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                      <Avatar user={user} size={18} />
+                      <b style={{ color: 'var(--ink-2)' }}>@{user.handle}</b>
+                      {post.book && <span>/ on <i>{post.book.title}</i></span>}
+                      <span>/ {timeAgo(post.created_at)}</span>
                     </div>
-                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{p.title}</div>
-                    {p.body && (
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{post.title}</div>
+                    {post.body && (
                       <div style={{ fontSize: 13, color: 'var(--ink-2)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                        {p.body}
+                        {post.body}
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: 'var(--ink-3)' }}>
-                      <span>△ {p.upvotes}</span>
-                      <span>💬 {(p as any).comment_count ?? 0}</span>
+                      <span>Score {post.upvotes}</span>
+                      <span>Replies {post.comment_count ?? 0}</span>
                     </div>
                   </div>
                 </Link>
@@ -299,27 +338,25 @@ export default function HomePage() {
           )}
         </div>
 
-        <div className="eyebrow" style={{ marginBottom: 12 }}>Latest shelf activity</div>
+        <div className="eyebrow" style={{ marginBottom: 12 }}>Recent activity</div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {activity.length === 0 ? (
             <div style={{ padding: 24, color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
               {me
-                ? 'No activity yet. Log a reading session, leave a review, or follow someone to start shaping the feed.'
+                ? 'No activity yet. Log a session, write a review, or follow someone.'
                 : 'No activity yet.'}
             </div>
           ) : (
-            activity.map((a) => {
-              const u = toUiUser(a.profile)
+            activity.map((event) => {
+              const user = toUiUser(event.profile)
               return (
-                <div key={a.id} style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border)' }}>
-                  <Avatar user={u} size={28} />
+                <div key={event.id} style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border)' }}>
+                  <Avatar user={user} size={28} />
                   <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
-                    <b>{u.name}</b>{' '}
-                    <span style={{ color: 'var(--ink-3)' }}>
-                      {describeEvent(a)}
-                    </span>
+                    <b>{user.name}</b>{' '}
+                    <span style={{ color: 'var(--ink-3)' }}>{describeEvent(event)}</span>
                   </div>
-                  <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{timeAgo(a.created_at)}</span>
+                  <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{timeAgo(event.created_at)}</span>
                 </div>
               )
             })
@@ -330,25 +367,27 @@ export default function HomePage() {
       <aside style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div className="eyebrow">Popular</div>
+            <div className="eyebrow">Popular books</div>
             <Link href="/explore" className="link-u" style={{ fontSize: 12, color: 'var(--pulp)', fontWeight: 600 }}>
               See all
             </Link>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {trending.map((b, i) => {
-              const ui = toUiBook(b, b.stats)
+            {trending.map((book, index) => {
+              const uiBook = toUiBook(book, book.stats)
               return (
-                <Link key={b.id} href={`/book/${b.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', padding: 0 }}>
+                <Link key={book.id} href={`/book/${book.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', padding: 0 }}>
                   <div className="mono" style={{ fontSize: 18, color: 'var(--ink-4)', width: 22, fontWeight: 600 }}>
-                    {String(i + 1).padStart(2, '0')}
+                    {String(index + 1).padStart(2, '0')}
                   </div>
-                  <Cover book={ui} size={44} />
+                  <Cover book={uiBook} size={44} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{ui.author}</div>
+                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {book.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{uiBook.author}</div>
                     <div style={{ fontSize: 11, color: 'var(--pulp)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
-                      {b.stats.avg_rating ? `★ ${b.stats.avg_rating.toFixed(1)}` : '★ -'} · {b.stats.rating_count} ratings
+                      {book.stats.avg_rating ? book.stats.avg_rating.toFixed(1) : '-'} / {book.stats.rating_count} ratings
                     </div>
                   </div>
                 </Link>
@@ -369,43 +408,43 @@ function buildOnboardingSteps(me: DbProfile | null, onboarding: DbOnboardingStat
 
   return [
     {
-      label: 'Add books to your shelves',
-      description: 'Import from Goodreads first, or save a few books so recommendations and shelves have something to work with.',
+      label: 'Add books',
+      description: 'Import Goodreads or save a few books.',
       href: onboarding.hasBooks ? '/search' : '/import',
       cta: onboarding.hasBooks ? 'Add more' : 'Import books',
       done: onboarding.hasBooks,
     },
     {
-      label: 'Pin favorites to your bookcase',
-      description: 'Your profile shelf looks dramatically better once the top row has a few anchors.',
+      label: 'Pin favorites',
+      description: 'Add favorites to the top row of your profile.',
       href: `/profile/${me.username ?? ''}`,
       cta: 'Open profile',
       done: onboarding.favoritesCount > 0,
     },
     {
-      label: 'Follow at least one reader',
-      description: 'Following gives the home feed real people to learn from instead of a blank activity list.',
+      label: 'Follow a reader',
+      description: 'Follow people to fill your feed.',
       href: '/search',
       cta: 'Find readers',
       done: onboarding.followingCount > 0,
     },
     {
       label: 'Join a club',
-      description: 'Clubs are the fastest way to make the app feel alive when you are new.',
+      description: 'Join a group reading the same book.',
       href: '/clubs',
       cta: 'Browse clubs',
       done: onboarding.clubsCount > 0,
     },
     {
-      label: 'Log your first reading session',
-      description: 'A streak only becomes trustworthy once you actually start logging sessions.',
+      label: 'Log a session',
+      description: 'Log a session to start your streak.',
       href: '/streak',
-      cta: 'Open streak',
+      cta: 'Open tracker',
       done: onboarding.sessionsCount > 0,
     },
     {
-      label: 'Write your first review',
-      description: 'Reviews fuel the social side of Bookcase and improve the home feed quickly.',
+      label: 'Write a review',
+      description: 'Rate a book and post a short review.',
       href: '/search',
       cta: 'Pick a book',
       done: onboarding.reviewsCount > 0,
@@ -425,12 +464,13 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-function describeEvent(a: DbActivityEvent): string {
-  const bookTitle = a.book?.title ? ` ${a.book.title}` : ''
+function describeEvent(event: DbActivityEvent): string {
+  const bookTitle = event.book?.title ? ` ${event.book.title}` : ''
   const targetName =
-    typeof a.metadata?.target_name === 'string' ? a.metadata.target_name : 'someone'
-  const badgeTitle = typeof a.metadata?.title === 'string' ? a.metadata.title : 'a badge'
-  switch (a.event_type) {
+    typeof event.metadata?.target_name === 'string' ? event.metadata.target_name : 'someone'
+  const badgeTitle = typeof event.metadata?.title === 'string' ? event.metadata.title : 'a badge'
+
+  switch (event.event_type) {
     case 'started_reading':
       return `started reading${bookTitle}`
     case 'finished_reading':
@@ -446,7 +486,7 @@ function describeEvent(a: DbActivityEvent): string {
     case 'badge_unlocked':
       return `unlocked ${badgeTitle}`
     default:
-      return a.event_type.replace(/_/g, ' ')
+      return event.event_type.replace(/_/g, ' ')
   }
 }
 
@@ -459,7 +499,7 @@ function GoalBar({
   value: number
   target: number
 }) {
-  const pct = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0
+  const percent = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, marginBottom: 6 }}>
@@ -471,7 +511,7 @@ function GoalBar({
       <div style={{ height: 10, borderRadius: 999, background: 'var(--paper-2)', overflow: 'hidden', border: '1px solid var(--border)' }}>
         <div
           style={{
-            width: `${pct}%`,
+            width: `${percent}%`,
             height: '100%',
             background: 'linear-gradient(90deg, var(--pulp), oklch(76% 0.16 72))',
           }}

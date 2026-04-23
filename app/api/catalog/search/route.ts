@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     )
   } catch (error) {
     return NextResponse.json(
-      { error: (error as Error).message || 'Could not search the wider catalog.' },
+      { error: (error as Error).message || 'Could not search Open Library.' },
       { status: 500 }
     )
   }

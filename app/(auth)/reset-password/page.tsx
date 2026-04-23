@@ -79,10 +79,10 @@ export default function ResetPasswordPage() {
 
   return (
     <div>
-      <div className="eyebrow" style={{ marginBottom: 12 }}>Secure your account</div>
+      <div className="eyebrow" style={{ marginBottom: 12 }}>Password reset</div>
       <h1 className="display-md" style={{ marginBottom: 10 }}>Choose a new password.</h1>
       <p style={{ fontSize: 14, color: 'var(--ink-3)', marginBottom: 24 }}>
-        Pick something new, save it once, and we&apos;ll bring you straight back in.
+        Enter a new password and sign back in.
       </p>
 
       {checking ? (

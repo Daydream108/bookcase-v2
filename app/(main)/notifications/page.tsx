@@ -259,12 +259,12 @@ export default function NotificationsPage() {
       >
         <div>
           <div className="eyebrow" style={{ marginBottom: 10 }}>
-            Activity hub
+            Notifications
           </div>
           <h1 className="display-lg">
-            Your corner
+            Activity from
             <br />
-            <i style={{ color: 'var(--pulp)' }}>of the noise.</i>
+            <i style={{ color: 'var(--pulp)' }}>your readers.</i>
           </h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -309,7 +309,7 @@ export default function NotificationsPage() {
             )}
           </div>
           <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-            This filter is remembered on this device.
+            Filter saved on this device.
           </div>
         </div>
       )}
@@ -323,7 +323,7 @@ export default function NotificationsPage() {
           <div style={{ fontSize: 12, marginTop: 6 }}>
             {items.length
               ? 'Nothing matches this filter right now.'
-              : 'Notifications will appear here when other readers follow, like, or reply to you.'}
+              : 'Notifications show up when readers follow, like, or reply to you.'}
           </div>
         </div>
       ) : (

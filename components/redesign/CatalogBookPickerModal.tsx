@@ -159,7 +159,7 @@ export function CatalogBookPickerModal({
               {title}
             </div>
             <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-              Search Bookcase first, then pull from Open Library when a title is missing.
+              Search Bookcase and Open Library.
             </div>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -190,7 +190,7 @@ export function CatalogBookPickerModal({
         <div style={{ overflowY: 'auto', display: 'grid', gap: 18, flex: 1, paddingRight: 4 }}>
           {!query.trim() && (
             <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-              Start typing to search your catalog and the wider library.
+              Start typing to search for a book.
             </div>
           )}
 
@@ -268,7 +268,7 @@ export function CatalogBookPickerModal({
           {broaderResults.length > 0 && (
             <section>
               <div className="eyebrow" style={{ marginBottom: 10 }}>
-                Broader catalog ({broaderResults.length})
+                Open Library ({broaderResults.length})
               </div>
               <div style={{ display: 'grid', gap: 8 }}>
                 {broaderResults.map((book) => {
@@ -369,7 +369,7 @@ async function fetchBroaderCatalog(query: string, limit = 12) {
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(payload?.error || 'Could not search the wider catalog right now.')
+    throw new Error(payload?.error || 'Could not search Open Library right now.')
   }
 
   const payload = (await response.json()) as { results?: OpenLibrarySearchResult[] }
