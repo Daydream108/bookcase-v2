@@ -768,8 +768,12 @@ create table if not exists book_posts (
 );
 
 alter table book_posts
-  add column if not exists post_type text not null default 'discussion',
-  add column if not exists contains_spoiler boolean not null default false,
+  add column if not exists post_type text not null default 'discussion';
+
+alter table book_posts
+  add column if not exists contains_spoiler boolean not null default false;
+
+alter table book_posts
   add column if not exists upvotes int not null default 0;
 
 create index if not exists book_posts_book_idx on book_posts (book_id, created_at desc);
@@ -791,8 +795,12 @@ create table if not exists book_post_comments (
 );
 
 alter table book_post_comments
-  add column if not exists parent_id uuid references book_post_comments(id) on delete cascade,
-  add column if not exists contains_spoiler boolean not null default false,
+  add column if not exists parent_id uuid references book_post_comments(id) on delete cascade;
+
+alter table book_post_comments
+  add column if not exists contains_spoiler boolean not null default false;
+
+alter table book_post_comments
   add column if not exists upvotes int not null default 0;
 
 create index if not exists book_post_comments_post_idx on book_post_comments (post_id, created_at);
