@@ -1,10 +1,41 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Cover } from '@/components/redesign/Cover'
 import { listPopularBooks, toUiBook, type DbBookCard } from '@/lib/db'
 import { createClient } from '@/lib/supabase/client'
+
+const popularGridStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 176px))',
+  gap: '22px 18px',
+  justifyContent: 'start',
+  alignItems: 'start',
+  marginBottom: 40,
+}
+
+const genreGridStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 150px))',
+  gap: '18px 14px',
+  justifyContent: 'start',
+  alignItems: 'start',
+}
+
+const popularCardStyle: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  maxWidth: 176,
+  textAlign: 'left',
+  padding: 0,
+}
+
+const genreCardStyle: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  maxWidth: 150,
+}
 
 export default function ExplorePage() {
   const supabase = useMemo(() => createClient(), [])
@@ -64,11 +95,11 @@ export default function ExplorePage() {
           No books in the catalog yet.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16, marginBottom: 40 }}>
+        <div style={popularGridStyle}>
           {books.slice(0, 12).map((book) => {
             const uiBook = toUiBook(book, book.stats)
             return (
-              <Link key={book.id} href={`/book/${book.id}`} style={{ textAlign: 'left', padding: 0 }}>
+              <Link key={book.id} href={`/book/${book.id}`} style={popularCardStyle}>
                 <Cover book={uiBook} size="100%" style={{ width: '100%', marginBottom: 10 }} />
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {book.title}
@@ -103,11 +134,11 @@ export default function ExplorePage() {
                     {list.length} books
                   </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
+                <div style={genreGridStyle}>
                   {list.slice(0, 6).map((book) => {
                     const uiBook = toUiBook(book, book.stats)
                     return (
-                      <Link key={book.id} href={`/book/${book.id}`}>
+                      <Link key={book.id} href={`/book/${book.id}`} style={genreCardStyle}>
                         <Cover book={uiBook} size="100%" style={{ width: '100%', marginBottom: 8 }} />
                         <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {book.title}

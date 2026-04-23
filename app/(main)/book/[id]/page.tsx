@@ -56,6 +56,10 @@ type CommentTreeNode = {
 
 const MAX_REPLY_DEPTH = 2
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 export default function BookPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const supabase = useMemo(() => createClient(), [])
@@ -85,6 +89,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const [showThread, setShowThread] = useState(false)
   const [threadTitle, setThreadTitle] = useState('')
   const [threadBody, setThreadBody] = useState('')
+  const [threadSubmitting, setThreadSubmitting] = useState(false)
 
   const [showLog, setShowLog] = useState(false)
   const [logPages, setLogPages] = useState('')
@@ -234,17 +239,24 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     if (!me) return flash('Sign in to start a thread')
     if (!threadTitle.trim()) return flash('Give your thread a title')
 
-    await createBookPost(supabase, {
-      bookId: id,
-      title: threadTitle,
-      body: threadBody,
-    })
+    setThreadSubmitting(true)
+    try {
+      await createBookPost(supabase, {
+        bookId: id,
+        title: threadTitle,
+        body: threadBody,
+      })
 
-    setThreadTitle('')
-    setThreadBody('')
-    setShowThread(false)
-    await refreshThreads()
-    flash('Thread posted')
+      setThreadTitle('')
+      setThreadBody('')
+      setShowThread(false)
+      await refreshThreads()
+      flash('Thread posted')
+    } catch (error) {
+      flash(getErrorMessage(error, 'Could not post thread'))
+    } finally {
+      setThreadSubmitting(false)
+    }
   }
 
   const submitLog = async (event: React.FormEvent) => {
@@ -600,6 +612,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               value={threadTitle}
               onChange={(event) => setThreadTitle(event.target.value)}
               placeholder="Thread title"
+              disabled={threadSubmitting}
               style={{
                 width: '100%',
                 padding: '12px 14px',
@@ -614,6 +627,7 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               onChange={(event) => setThreadBody(event.target.value)}
               rows={5}
               placeholder="What do you want to discuss?"
+              disabled={threadSubmitting}
               style={{
                 width: '100%',
                 padding: '10px 12px',
@@ -625,10 +639,15 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
               }}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="submit" className="btn btn-pulp" style={{ flex: 1, justifyContent: 'center' }}>
-                Post thread
+              <button
+                type="submit"
+                className="btn btn-pulp"
+                disabled={threadSubmitting}
+                style={{ flex: 1, justifyContent: 'center', opacity: threadSubmitting ? 0.7 : 1 }}
+              >
+                {threadSubmitting ? 'Posting...' : 'Post thread'}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowThread(false)}>
+              <button type="button" className="btn btn-ghost" disabled={threadSubmitting} onClick={() => setShowThread(false)}>
                 Cancel
               </button>
             </div>

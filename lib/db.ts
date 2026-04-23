@@ -367,6 +367,15 @@ function isMissingSchemaColumnError(error: unknown, column: string) {
   )
 }
 
+function normalizeBookPost(row: any): DbBookPost {
+  return {
+    ...(row as DbBookPost),
+    post_type: row?.post_type ?? 'discussion',
+    contains_spoiler: row?.contains_spoiler ?? false,
+    upvotes: row?.upvotes ?? 0,
+  }
+}
+
 function currentYear() {
   return new Date().getFullYear()
 }
@@ -961,7 +970,7 @@ async function hydrateBookPostCounts(
 
   const counts = countByKey((comments ?? []) as { post_id: string }[], 'post_id')
   return posts.map((post) => ({
-    ...post,
+    ...normalizeBookPost(post),
     comment_count: counts.get(post.id) ?? 0,
   }))
 }
@@ -1599,10 +1608,12 @@ export async function searchBookPosts(
     .order('upvotes', { ascending: false, nullsFirst: false })
     .limit(limit)
 
-  const mapped = (data ?? []).map((row: any) => ({
-      ...(row as DbBookPost),
+  const mapped = (data ?? []).map((row: any) =>
+    normalizeBookPost({
+      ...row,
       book: row.book ? mapBookWithAuthors(row.book) : null,
-    }))
+    })
+  )
 
   const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
   return hydrateBookPostCounts(supabase, filterRowsByHiddenUsers(mapped, hiddenUserIds))
@@ -2607,7 +2618,7 @@ export async function listBookPosts(
   const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
   return hydrateBookPostCounts(
     supabase,
-    filterRowsByHiddenUsers((data ?? []) as DbBookPost[], hiddenUserIds)
+    filterRowsByHiddenUsers((data ?? []).map(normalizeBookPost), hiddenUserIds)
   )
 }
 
@@ -2624,37 +2635,46 @@ export async function createBookPost(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
-  const basePayload = {
+  const requiredPayload = {
     user_id: user.id,
     book_id: input.bookId,
     title: input.title.trim(),
     body: input.body?.trim() || null,
-    post_type: input.post_type ?? 'discussion',
   }
 
-  const inserted = await supabase
-    .from('book_posts')
-    .insert({
-      ...basePayload,
+  const preferredPayloads = [
+    {
+      ...requiredPayload,
+      post_type: input.post_type ?? 'discussion',
       contains_spoiler: input.spoiler ?? false,
-    })
-    .select('*')
-    .single()
+    },
+    {
+      ...requiredPayload,
+      post_type: input.post_type ?? 'discussion',
+    },
+    requiredPayload,
+  ]
 
-  if (isMissingSchemaColumnError(inserted.error, 'contains_spoiler')) {
-    const fallback = await supabase
+  let lastError: unknown = null
+  for (const payload of preferredPayloads) {
+    const { data, error } = await supabase
       .from('book_posts')
-      .insert(basePayload)
+      .insert(payload)
       .select('*')
       .single()
 
-    if (fallback.error) throw fallback.error
-    return { ...(fallback.data as DbBookPost), contains_spoiler: false }
+    if (!error) return normalizeBookPost(data)
+    lastError = error
+
+    if (
+      !isMissingSchemaColumnError(error, 'contains_spoiler') &&
+      !isMissingSchemaColumnError(error, 'post_type')
+    ) {
+      throw error
+    }
   }
 
-  const { data, error } = inserted
-  if (error) throw error
-  return data as DbBookPost
+  throw lastError
 }
 
 export async function listRecentBookPosts(
@@ -2668,10 +2688,12 @@ export async function listRecentBookPosts(
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  const mapped = (data ?? []).map((row: any) => ({
-    ...(row as DbBookPost),
-    book: row.book ? mapBookWithAuthors(row.book) : null,
-  }))
+  const mapped = (data ?? []).map((row: any) =>
+    normalizeBookPost({
+      ...row,
+      book: row.book ? mapBookWithAuthors(row.book) : null,
+    })
+  )
 
   const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
   return hydrateBookPostCounts(
