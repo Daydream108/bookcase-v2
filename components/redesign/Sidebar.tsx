@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar } from '@/components/redesign/Avatar'
 import { Icon } from '@/components/redesign/Icon'
 import { createClient } from '@/lib/supabase/client'
@@ -20,6 +20,30 @@ export function Sidebar({ open = false, onNavigate }: { open?: boolean; onNaviga
   const [profile, setProfile] = useState<DbProfile | null>(null)
   const [unread, setUnread] = useState(0)
   const [streakDays, setStreakDays] = useState(0)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!userMenuOpen) return
+    const handleClick = (event: MouseEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) {
+        setUserMenuOpen(false)
+      }
+    }
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setUserMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [userMenuOpen])
+
+  useEffect(() => {
+    setUserMenuOpen(false)
+  }, [pathname])
 
   useEffect(() => {
     let cancelled = false
@@ -127,29 +151,88 @@ export function Sidebar({ open = false, onNavigate }: { open?: boolean; onNaviga
             <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>days active</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '0 6px' }}>
-          <Avatar user={uiUser} size={28} />
-          <div style={{ lineHeight: 1.2, flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{uiUser.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>@{uiUser.handle}</div>
-          </div>
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
-              aria-label="Sign out"
-              title="Sign out"
+        <div ref={userMenuRef} style={{ position: 'relative', marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => setUserMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px',
+              width: '100%',
+              border: '1px solid transparent',
+              background: userMenuOpen ? 'var(--paper-2)' : 'transparent',
+              borderRadius: 10,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <Avatar user={uiUser} size={28} />
+            <div style={{ lineHeight: 1.2, flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{uiUser.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>@{uiUser.handle}</div>
+            </div>
+            <Icon name="arrow" size={12} />
+          </button>
+          {userMenuOpen && (
+            <div
+              role="menu"
+              className="card"
               style={{
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-                color: 'var(--ink-3)',
-                padding: 4,
-                borderRadius: 6,
+                position: 'absolute',
+                bottom: 'calc(100% + 6px)',
+                left: 0,
+                right: 0,
+                padding: 6,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                boxShadow: '0 6px 24px rgba(0,0,0,0.08)',
+                zIndex: 20,
               }}
             >
-              <Icon name="arrow" size={14} />
-            </button>
-          </form>
+              <Link
+                href={`/profile/${handle}`}
+                onClick={() => setUserMenuOpen(false)}
+                role="menuitem"
+                style={{ padding: '8px 10px', fontSize: 13, borderRadius: 8, textDecoration: 'none', color: 'inherit' }}
+              >
+                View profile
+              </Link>
+              <Link
+                href="/settings"
+                onClick={() => setUserMenuOpen(false)}
+                role="menuitem"
+                style={{ padding: '8px 10px', fontSize: 13, borderRadius: 8, textDecoration: 'none', color: 'inherit' }}
+              >
+                Settings
+              </Link>
+              <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+              <form action="/auth/signout" method="post">
+                <button
+                  type="submit"
+                  role="menuitem"
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '8px 10px',
+                    fontSize: 13,
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--pulp-deep)',
+                    fontWeight: 600,
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </div>
     </aside>

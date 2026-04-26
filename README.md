@@ -22,9 +22,9 @@ Current beta status only.
 
 ## Live Beta Checks
 
-- [ ] Run the full live smoke test on the deployed Cloudflare Worker.
+- [x] Run the full live smoke test on the deployed Cloudflare Worker.
 - [ ] Create the first production moderator row and verify moderator tools end to end.
-- [ ] Verify search quality in production with real title, author, series, ISBN, comic, manga, and graphic-novel queries.
+- [x] Verify search quality in production with real title, author, series, ISBN, comic, manga, and graphic-novel queries.
 - [ ] Verify onboarding with a truly new account from sign up through first session logged.
 - [ ] Verify non-prose content in the live app so it never feels like an edge case.
 - [ ] Do one final sparse-state and failure-state pass on search, home, profile, clubs, notifications, safety, streak, and explore.

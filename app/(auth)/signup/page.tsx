@@ -11,7 +11,7 @@ export default function SignupPage() {
   const supabase = useMemo(() => createClient(), [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [name, setName] = useState('')
+  const [username, setUsername] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -21,13 +21,24 @@ export default function SignupPage() {
     e.preventDefault()
     setError(null)
     setMessage(null)
+
+    const trimmedUsername = username.trim()
+    if (trimmedUsername.length < 2 || trimmedUsername.length > 30) {
+      setError('Username must be 2 to 30 characters.')
+      return
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmedUsername)) {
+      setError('Username can only contain letters, numbers, and underscores.')
+      return
+    }
+
     setLoading(true)
 
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { display_name: name },
+        data: { username: trimmedUsername, display_name: trimmedUsername },
         emailRedirectTo: buildAuthCallbackUrl('/import?source=signup'),
       },
     })
@@ -86,15 +97,22 @@ export default function SignupPage() {
 
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>
-          Display name
+          Username
         </label>
         <input
           required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Brett"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          minLength={2}
+          maxLength={30}
+          pattern="[a-zA-Z0-9_]+"
+          autoComplete="username"
+          placeholder="brett_reads"
           style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 10, fontSize: 14, background: 'var(--paper)' }}
         />
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: -6 }}>
+          Letters, numbers, and underscores. This is also your display name; you can change either later in settings.
+        </div>
 
         <label className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-3)', fontWeight: 600 }}>
           Email
