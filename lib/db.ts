@@ -240,6 +240,13 @@ export type DbClubPost = {
   book?: DbBookWithAuthors | null
 }
 
+export type DbClubPostPreview = Pick<
+  DbClubPost,
+  'id' | 'club_id' | 'title' | 'body' | 'created_at' | 'is_pinned'
+> & {
+  profile?: DbProfile | null
+}
+
 export type DbRoadmapFeature = {
   id: string
   title: string
@@ -4332,6 +4339,47 @@ export async function listClubPosts(
   return (data ?? [])
     .map(mapClubPost)
     .filter((post) => !hiddenUserIds.has(post.user_id))
+}
+
+export async function listRecentClubPostPreviews(
+  supabase: Client,
+  clubIds: string[],
+  limit = 60
+): Promise<Record<string, DbClubPostPreview[]>> {
+  if (!clubIds.length) return {}
+
+  const currentUser = await getCurrentUser(supabase)
+  const { data, error } = await supabase
+    .from('club_posts')
+    .select('id, club_id, user_id, title, body, is_pinned, created_at, profile:profiles!club_posts_user_id_fkey ( * )')
+    .in('club_id', clubIds)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) return {}
+
+  const hiddenUserIds = await getHiddenUserIdsForViewer(supabase, currentUser?.id)
+  const previews: Record<string, DbClubPostPreview[]> = {}
+
+  for (const row of data ?? []) {
+    if (hiddenUserIds.has(row.user_id)) continue
+    const clubPreviews = previews[row.club_id] ?? []
+    if (clubPreviews.length >= 2) continue
+    const profile = Array.isArray(row.profile) ? row.profile[0] : row.profile
+    const preview: DbClubPostPreview = {
+      id: row.id,
+      club_id: row.club_id,
+      title: row.title,
+      body: row.body,
+      is_pinned: row.is_pinned,
+      created_at: row.created_at,
+      profile: profile ?? null,
+    }
+
+    previews[row.club_id] = [...clubPreviews, preview]
+  }
+
+  return previews
 }
 
 export async function postToClub(

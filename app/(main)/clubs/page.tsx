@@ -14,7 +14,10 @@ import {
   joinClub,
   leaveClub,
   listClubs,
+  listRecentClubPostPreviews,
   toUiBook,
+  toUiUser,
+  type DbClubPostPreview,
   type DbClub,
   type DbProfile,
 } from '@/lib/db'
@@ -24,6 +27,7 @@ export default function ClubsPage() {
   const router = useRouter()
   const [me, setMe] = useState<DbProfile | null>(null)
   const [clubs, setClubs] = useState<DbClub[]>([])
+  const [replyPreviews, setReplyPreviews] = useState<Record<string, DbClubPostPreview[]>>({})
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -41,10 +45,16 @@ export default function ClubsPage() {
         getCurrentProfile(supabase),
         listClubs(supabase, 24),
       ])
+      const previews = await listRecentClubPostPreviews(
+        supabase,
+        rows.map((club) => club.id)
+      )
       setMe(profile)
       setClubs(rows)
+      setReplyPreviews(previews)
     } catch (error) {
       setClubs([])
+      setReplyPreviews({})
       setLoadError((error as Error).message || 'Could not load clubs right now.')
     } finally {
       setLoading(false)
@@ -60,12 +70,18 @@ export default function ClubsPage() {
           getCurrentProfile(supabase),
           listClubs(supabase, 24),
         ])
+        const previews = await listRecentClubPostPreviews(
+          supabase,
+          rows.map((club) => club.id)
+        )
         if (cancelled) return
         setMe(profile)
         setClubs(rows)
+        setReplyPreviews(previews)
       } catch (error) {
         if (cancelled) return
         setClubs([])
+        setReplyPreviews({})
         setLoadError((error as Error).message || 'Could not load clubs right now.')
       } finally {
         if (!cancelled) setLoading(false)
@@ -401,6 +417,7 @@ export default function ClubsPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18 }}>
           {clubs.map((club) => {
             const bookUi = club.current_book ? toUiBook(club.current_book) : null
+            const previews = replyPreviews[club.id] ?? []
             return (
               <div key={club.id} className="card" style={{ padding: 0, overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }}>
                 <div
@@ -463,6 +480,60 @@ export default function ClubsPage() {
                     No current book yet.
                   </div>
                 )}
+
+                <div style={{ padding: bookUi ? '0 20px 18px' : '0 20px 18px' }}>
+                  <div className="eyebrow" style={{ marginBottom: 10 }}>
+                    Latest replies
+                  </div>
+                  {previews.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {previews.map((preview) => {
+                        const user = toUiUser(preview.profile)
+                        return (
+                          <Link
+                            key={preview.id}
+                            href={`/clubs/${club.id}`}
+                            style={{
+                              display: 'grid',
+                              gap: 4,
+                              padding: 12,
+                              borderRadius: 14,
+                              background: 'var(--paper-2)',
+                              border: '1px solid var(--border)',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {preview.title}
+                              </div>
+                              <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)', flexShrink: 0 }}>
+                                @{user.handle}
+                              </span>
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--ink-3)',
+                                lineHeight: 1.4,
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                              }}
+                            >
+                              {preview.body}
+                            </div>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+                      <Icon name="message" size={14} />
+                      No replies yet.
+                    </div>
+                  )}
+                </div>
 
                 <div style={{ padding: '0 20px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
