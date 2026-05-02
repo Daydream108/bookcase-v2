@@ -3005,32 +3005,43 @@ export async function createComment(
   const basePayload = {
     post_id: input.postId,
     user_id: user.id,
-    parent_id: input.parentId ?? null,
     body: trimmedBody,
   }
 
-  const inserted = await supabase
+  const buildPayload = (opts: { withSpoiler: boolean; withParent: boolean }) => {
+    const payload: Record<string, unknown> = { ...basePayload }
+    if (opts.withSpoiler) payload.contains_spoiler = input.spoiler ?? false
+    if (opts.withParent) payload.parent_id = input.parentId ?? null
+    return payload
+  }
+
+  let result = await supabase
     .from('book_post_comments')
-    .insert({
-      ...basePayload,
-      contains_spoiler: input.spoiler ?? false,
-    })
+    .insert(buildPayload({ withSpoiler: true, withParent: true }))
     .select('*')
     .single()
 
-  if (isMissingSchemaColumnError(inserted.error, 'contains_spoiler')) {
-    const fallback = await supabase
+  if (isMissingSchemaColumnError(result.error, 'parent_id')) {
+    result = await supabase
       .from('book_post_comments')
-      .insert(basePayload)
+      .insert(buildPayload({ withSpoiler: true, withParent: false }))
       .select('*')
       .single()
-
-    if (fallback.error) throw fallback.error
-    inserted.data = { ...(fallback.data as DbBookPostComment), contains_spoiler: false }
-    inserted.error = null
+  }
+  if (isMissingSchemaColumnError(result.error, 'contains_spoiler')) {
+    const lastTry = await supabase
+      .from('book_post_comments')
+      .insert(buildPayload({ withSpoiler: false, withParent: false }))
+      .select('*')
+      .single()
+    if (lastTry.error) throw lastTry.error
+    result = {
+      ...lastTry,
+      data: { ...(lastTry.data as DbBookPostComment), contains_spoiler: false },
+    }
   }
 
-  const { data, error } = inserted
+  const { data, error } = result
   if (error) throw error
 
   const { data: post } = await supabase
@@ -3164,16 +3175,38 @@ export async function setPostVote(
   const user = await getCurrentUser(supabase)
   if (!user) throw new Error('Not signed in')
 
-  const { data: existing } = await supabase
+  let voteValueSupported = true
+  let existing: { vote_value?: number } | null = null
+
+  const initial = await supabase
     .from('book_post_upvotes')
     .select('vote_value')
     .eq('user_id', user.id)
     .eq('post_id', postId)
     .maybeSingle()
 
+  if (initial.error && isMissingSchemaColumnError(initial.error, 'vote_value')) {
+    voteValueSupported = false
+    const fallback = await supabase
+      .from('book_post_upvotes')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .eq('post_id', postId)
+      .maybeSingle()
+    if (fallback.error) throw fallback.error
+    existing = fallback.data ? { vote_value: 1 } : null
+  } else if (initial.error) {
+    throw initial.error
+  } else {
+    existing = initial.data
+  }
+
   const currentVote = (existing?.vote_value ?? 0) as PostVote
 
-  if (next === 0) {
+  // If vote_value is not supported in prod, downvotes silently behave as upvotes.
+  const effectiveNext: PostVote = voteValueSupported ? next : next === -1 ? 1 : next
+
+  if (effectiveNext === 0) {
     if (!existing) return 0
     const { error } = await supabase
       .from('book_post_upvotes')
@@ -3184,25 +3217,37 @@ export async function setPostVote(
     return 0
   }
 
-  if (currentVote === next) return currentVote
+  if (currentVote === effectiveNext) return currentVote
 
   if (existing) {
-    const { error } = await supabase
-      .from('book_post_upvotes')
-      .update({ vote_value: next })
-      .eq('user_id', user.id)
-      .eq('post_id', postId)
-    if (error) throw error
+    if (voteValueSupported) {
+      const { error } = await supabase
+        .from('book_post_upvotes')
+        .update({ vote_value: effectiveNext })
+        .eq('user_id', user.id)
+        .eq('post_id', postId)
+      if (error) throw error
+    }
+    // If unsupported, the row already exists representing an upvote — no-op.
   } else {
-    const { error } = await supabase.from('book_post_upvotes').insert({
+    const insertPayload: Record<string, unknown> = {
       user_id: user.id,
       post_id: postId,
-      vote_value: next,
-    })
-    if (error) throw error
+    }
+    if (voteValueSupported) insertPayload.vote_value = effectiveNext
+    const { error } = await supabase.from('book_post_upvotes').insert(insertPayload)
+    if (error && isMissingSchemaColumnError(error, 'vote_value')) {
+      const retry = await supabase.from('book_post_upvotes').insert({
+        user_id: user.id,
+        post_id: postId,
+      })
+      if (retry.error) throw retry.error
+    } else if (error) {
+      throw error
+    }
   }
 
-  if (next === 1 && currentVote !== 1) {
+  if (effectiveNext === 1 && currentVote !== 1) {
     const { data: post } = await supabase
       .from('book_posts')
       .select('user_id, title')
@@ -3226,7 +3271,7 @@ export async function setPostVote(
     }
   }
 
-  return next
+  return effectiveNext
 }
 
 export async function togglePostUpvote(
@@ -3757,13 +3802,28 @@ export async function listPostVotes(
 ): Promise<Record<string, PostVote>> {
   const user = await getCurrentUser(supabase)
   if (!user || !postIds.length) return {}
-  const { data } = await supabase
+  let rows: Array<{ post_id: string; vote_value?: number }> = []
+  const initial = await supabase
     .from('book_post_upvotes')
     .select('post_id, vote_value')
     .eq('user_id', user.id)
     .in('post_id', postIds)
+  if (initial.error && isMissingSchemaColumnError(initial.error, 'vote_value')) {
+    const fallback = await supabase
+      .from('book_post_upvotes')
+      .select('post_id')
+      .eq('user_id', user.id)
+      .in('post_id', postIds)
+    rows = ((fallback.data ?? []) as Array<{ post_id: string }>).map((row) => ({
+      post_id: row.post_id,
+    }))
+  } else if (initial.error) {
+    return {}
+  } else {
+    rows = (initial.data ?? []) as Array<{ post_id: string; vote_value: number }>
+  }
   const result: Record<string, PostVote> = {}
-  for (const row of (data ?? []) as Array<{ post_id: string; vote_value: number }>) {
+  for (const row of rows) {
     if (row.post_id) result[row.post_id] = row.vote_value === -1 ? -1 : 1
   }
   return result
@@ -4069,6 +4129,136 @@ export async function createClub(
     member_count: 1,
     is_member: true,
   }
+}
+
+export async function updateClub(
+  supabase: Client,
+  clubId: string,
+  input: {
+    name?: string
+    description?: string | null
+    isPublic?: boolean
+    currentBookId?: string | null
+  }
+): Promise<DbClub> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+
+  const updates: Record<string, unknown> = {}
+  if (input.name !== undefined) updates.name = input.name.trim()
+  if (input.description !== undefined)
+    updates.description = input.description?.trim() ? input.description.trim() : null
+  if (input.isPublic !== undefined) updates.is_public = input.isPublic
+  if (input.currentBookId !== undefined) updates.current_book_id = input.currentBookId
+
+  const { data, error } = await supabase
+    .from('clubs')
+    .update(updates)
+    .eq('id', clubId)
+    .eq('owner_id', user.id)
+    .select(`*, current_book:books ( ${BOOK_SELECT} )`)
+    .single()
+
+  if (error) throw error
+
+  try {
+    if (input.currentBookId !== undefined && input.currentBookId) {
+      await supabase
+        .from('club_books')
+        .update({ status: 'past', finished_at: new Date().toISOString() })
+        .eq('club_id', clubId)
+        .eq('status', 'current')
+        .neq('book_id', input.currentBookId)
+      await supabase.from('club_books').upsert(
+        {
+          club_id: clubId,
+          book_id: input.currentBookId,
+          status: 'current',
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+        { onConflict: 'club_id,book_id' }
+      )
+    } else if (input.currentBookId === null) {
+      await supabase
+        .from('club_books')
+        .update({ status: 'past', finished_at: new Date().toISOString() })
+        .eq('club_id', clubId)
+        .eq('status', 'current')
+    }
+  } catch (err) {
+    console.warn('club_books not available; skipping history update', err)
+  }
+
+  return mapClub(data)
+}
+
+export type DbClubBook = {
+  id: string
+  club_id: string
+  book_id: string
+  status: 'current' | 'past'
+  position: number
+  started_at: string | null
+  finished_at: string | null
+  added_at: string
+  book?: DbBookWithAuthors | null
+}
+
+export async function listClubBooks(
+  supabase: Client,
+  clubId: string
+): Promise<DbClubBook[]> {
+  const { data, error } = await supabase
+    .from('club_books')
+    .select(`*, book:books ( ${BOOK_SELECT} )`)
+    .eq('club_id', clubId)
+    .order('status', { ascending: true })
+    .order('finished_at', { ascending: false, nullsFirst: false })
+    .order('added_at', { ascending: false })
+  if (error) return []
+  return ((data ?? []) as any[]).map((row) => ({
+    ...(row as DbClubBook),
+    book: row.book ? mapBookWithAuthors(row.book) : null,
+  }))
+}
+
+export async function addClubPastBook(
+  supabase: Client,
+  clubId: string,
+  bookId: string
+): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  const { error } = await supabase.from('club_books').upsert(
+    {
+      club_id: clubId,
+      book_id: bookId,
+      status: 'past',
+      finished_at: new Date().toISOString(),
+    },
+    { onConflict: 'club_id,book_id' }
+  )
+  if (error) {
+    throw new Error(
+      'Could not add past book — run the latest supabase/bookcase.sql to create the club_books table.'
+    )
+  }
+}
+
+export async function removeClubBook(
+  supabase: Client,
+  clubId: string,
+  bookId: string
+): Promise<void> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('club_books')
+    .delete()
+    .eq('club_id', clubId)
+    .eq('book_id', bookId)
+  if (error) throw error
 }
 
 export async function joinClub(supabase: Client, clubId: string) {

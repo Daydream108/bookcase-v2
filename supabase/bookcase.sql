@@ -689,6 +689,21 @@ create or replace trigger clubs_updated_at
   before update on clubs
   for each row execute function update_updated_at();
 
+-- Books a club has read or is reading
+create table if not exists club_books (
+  id         uuid primary key default gen_random_uuid(),
+  club_id    uuid not null references clubs(id) on delete cascade,
+  book_id    uuid not null references books(id) on delete cascade,
+  status     text not null default 'past' check (status in ('current', 'past')),
+  position   int not null default 0,
+  started_at timestamptz,
+  finished_at timestamptz,
+  added_at   timestamptz not null default now(),
+  unique (club_id, book_id)
+);
+
+create index if not exists club_books_club_idx on club_books (club_id, status, position);
+
 create table if not exists club_members (
   club_id    uuid not null references clubs(id)    on delete cascade,
   user_id    uuid not null references profiles(id) on delete cascade,
@@ -816,6 +831,21 @@ create table if not exists book_post_upvotes (
   created_at timestamptz not null default now(),
   primary key (user_id, post_id)
 );
+
+alter table book_post_upvotes
+  add column if not exists vote_value int not null default 1;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'book_post_upvotes_vote_value_check'
+  ) then
+    alter table book_post_upvotes
+      add constraint book_post_upvotes_vote_value_check
+      check (vote_value in (1, -1));
+  end if;
+end $$;
 
 create index if not exists book_post_upvotes_post_idx on book_post_upvotes (post_id);
 
@@ -979,6 +1009,7 @@ alter table clubs              enable row level security;
 alter table club_members       enable row level security;
 alter table club_posts         enable row level security;
 alter table club_comments      enable row level security;
+alter table club_books         enable row level security;
 alter table reading_sessions   enable row level security;
 alter table reading_stats      enable row level security;
 alter table streaks           enable row level security;
@@ -1030,6 +1061,19 @@ drop policy if exists "Comment authors can delete" on club_comments;
 create policy "Club comments viewable by everyone"    on club_comments for select using (true);
 create policy "Authenticated users can comment"       on club_comments for insert with check (auth.uid() = user_id);
 create policy "Comment authors can delete"            on club_comments for delete using (auth.uid() = user_id);
+
+-- club_books
+drop policy if exists "Club books viewable by everyone" on club_books;
+drop policy if exists "Club owners can manage books" on club_books;
+drop policy if exists "Club owners can update books" on club_books;
+drop policy if exists "Club owners can delete books" on club_books;
+create policy "Club books viewable by everyone" on club_books for select using (true);
+create policy "Club owners can manage books"     on club_books for insert
+  with check (exists (select 1 from clubs where clubs.id = club_books.club_id and clubs.owner_id = auth.uid()));
+create policy "Club owners can update books"     on club_books for update
+  using (exists (select 1 from clubs where clubs.id = club_books.club_id and clubs.owner_id = auth.uid()));
+create policy "Club owners can delete books"     on club_books for delete
+  using (exists (select 1 from clubs where clubs.id = club_books.club_id and clubs.owner_id = auth.uid()));
 
 -- reading_sessions
 drop policy if exists "Reading sessions viewable by owner" on reading_sessions;

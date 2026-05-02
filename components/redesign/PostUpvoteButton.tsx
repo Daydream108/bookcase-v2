@@ -39,7 +39,8 @@ export function PostUpvoteButton({
         setUpvoted(result)
         setCount((c) => c + (result === next ? 0 : result ? 1 : -1))
       }
-    } catch {
+    } catch (err) {
+      console.error('upvote failed', err)
       setUpvoted(!next)
       setCount((c) => c + (next ? -1 : 1))
     } finally {
@@ -110,7 +111,8 @@ export function PostVoteButtons({
         setVote(result)
         setScore(prevScore - prevVote + result)
       }
-    } catch {
+    } catch (err) {
+      console.error('vote failed', err)
       setVote(prevVote)
       setScore(prevScore)
     } finally {
