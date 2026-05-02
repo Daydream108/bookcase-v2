@@ -414,6 +414,20 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
     flash(formatToast('Session logged', awarded))
   }
 
+  const sortedReviews = useMemo(() => {
+    return [...reviews].sort((left, right) => {
+      if (reviewSort === 'highest') {
+        if (right.rating !== left.rating) return right.rating - left.rating
+        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
+      }
+      if (reviewSort === 'liked') {
+        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
+        if (right.rating !== left.rating) return right.rating - left.rating
+      }
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+    })
+  }, [reviewSort, reviews])
+
   if (loading) {
     return <div style={{ padding: 60, textAlign: 'center', color: 'var(--ink-3)' }}>Loading...</div>
   }
@@ -434,19 +448,6 @@ export default function BookPage({ params }: { params: Promise<{ id: string }> }
   const shelf = userBook?.status ?? 'none'
   const myRating = userBook?.rating ?? 0
   const myReview = me ? reviews.find((review) => review.user_id === me.id) ?? null : null
-  const sortedReviews = useMemo(() => {
-    return [...reviews].sort((left, right) => {
-      if (reviewSort === 'highest') {
-        if (right.rating !== left.rating) return right.rating - left.rating
-        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
-      }
-      if (reviewSort === 'liked') {
-        if (right.liked_count !== left.liked_count) return right.liked_count - left.liked_count
-        if (right.rating !== left.rating) return right.rating - left.rating
-      }
-      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
-    })
-  }, [reviewSort, reviews])
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto' }}>

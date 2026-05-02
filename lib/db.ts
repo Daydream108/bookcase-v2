@@ -3278,7 +3278,8 @@ export async function togglePostUpvote(
   supabase: Client,
   postId: string
 ): Promise<boolean> {
-  const result = await setPostVote(supabase, postId, 1)
+  const currentVotes = await listPostVotes(supabase, [postId])
+  const result = await setPostVote(supabase, postId, currentVotes[postId] === 1 ? 0 : 1)
   return result === 1
 }
 
