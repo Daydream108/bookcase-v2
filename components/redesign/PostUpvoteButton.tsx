@@ -21,10 +21,9 @@ export function PostUpvoteButton({
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
-    if (pending) return
     setUpvoted(initialUpvoted)
     setCount(initialCount)
-  }, [initialCount, initialUpvoted, pending])
+  }, [initialCount, initialUpvoted])
 
   const onClick = async (e: React.MouseEvent) => {
     e.preventDefault()
@@ -93,10 +92,9 @@ export function PostVoteButtons({
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
-    if (pending) return
     setVote(initialVote)
     setScore(initialCount)
-  }, [initialCount, initialVote, pending])
+  }, [initialCount, initialVote])
 
   const apply = async (direction: 1 | -1) => {
     if (pending) return

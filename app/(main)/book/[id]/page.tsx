@@ -60,7 +60,7 @@ type CommentTreeNode = {
 
 type ReviewSort = 'newest' | 'highest' | 'liked'
 
-const MAX_REPLY_DEPTH = 2
+const MAX_REPLY_DEPTH = 4
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
