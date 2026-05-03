@@ -518,3 +518,35 @@ button:focus:not(:focus-visible) { outline: none; }
 @media (max-width: 480px) {
   [style*="padding: 20px 16px"] { padding: 16px 12px !important; }
 }
+
+@media (max-width: 760px) {
+  .clubs-hero-grid,
+  .clubs-two-grid,
+  .clubs-create-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .clubs-hero-grid {
+    gap: 22px !important;
+  }
+
+  .clubs-create-grid {
+    padding: 16px !important;
+  }
+
+  .clubs-hero-grid .display-xl {
+    font-size: clamp(42px, 13vw, 64px) !important;
+  }
+
+  .clubs-hero-grid p {
+    font-size: 15px !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .clubs-hero-grid .btn,
+  .clubs-create-grid .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Avatar } from '@/components/redesign/Avatar'
 import { Cover } from '@/components/redesign/Cover'
 import { Icon } from '@/components/redesign/Icon'
 import { ReportButton } from '@/components/redesign/ReportButton'
@@ -11,13 +10,16 @@ import { StateCard } from '@/components/redesign/StateCard'
 import { createClient } from '@/lib/supabase/client'
 import {
   createClub,
+  getCommunityTournamentVoteState,
   getCurrentProfile,
   joinClub,
   leaveClub,
   listClubs,
   listRecentClubPostPreviews,
+  setCommunityTournamentVote,
   toUiBook,
   toUiUser,
+  type DbCommunityTournamentVoteState,
   type DbClub,
   type DbClubPostPreview,
   type DbProfile,
@@ -25,48 +27,25 @@ import {
 
 type Tab = 'your' | 'discover' | 'live' | 'week'
 
-const sampleBooks = [
+const tournamentBooks = [
   { id: 'hm', title: 'Project Hail Mary', author: 'Andy Weir', cover: 'https://covers.openlibrary.org/b/isbn/9780593135204-L.jpg', rating: 4.5, ratings: 0, mood: [], genre: 'sci-fi', pages: 476, year: 2021, color: '#1a1a1a' },
-  { id: 'sb', title: 'The Secret History', author: 'Donna Tartt', cover: 'https://covers.openlibrary.org/b/isbn/9781400031702-L.jpg', rating: 4.6, ratings: 0, mood: [], genre: 'literary', pages: 559, year: 1992, color: '#2c1810' },
-  { id: 'pr', title: 'Piranesi', author: 'Susanna Clarke', cover: 'https://covers.openlibrary.org/b/isbn/9781635575637-L.jpg', rating: 4.4, ratings: 0, mood: [], genre: 'fantasy', pages: 245, year: 2020, color: '#4a3a2a' },
-  { id: 'cr', title: 'Circe', author: 'Madeline Miller', cover: 'https://covers.openlibrary.org/b/isbn/9780316556347-L.jpg', rating: 4.5, ratings: 0, mood: [], genre: 'myth', pages: 393, year: 2018, color: '#b85a3a' },
+  { id: 'sr', title: 'Sunrise on the Reaping', author: 'Suzanne Collins', cover: 'https://covers.openlibrary.org/b/isbn/9781546171461-L.jpg', rating: 0, ratings: 0, mood: [], genre: 'dystopian', pages: 400, year: 2025, color: '#2a1812' },
 ]
 
-const sampleUsers = [
-  { id: 'ava', name: 'Ava Chen', handle: 'avareads', avatar: null, color: 'oklch(66% 0.18 42)' },
-  { id: 'maya', name: 'Maya Okonkwo', handle: 'mayamoss', avatar: null, color: 'oklch(50% 0.12 150)' },
-  { id: 'leo', name: 'Leo Park', handle: 'leopark', avatar: null, color: 'oklch(58% 0.14 240)' },
-  { id: 'jules', name: 'Jules Rivera', handle: 'julesr', avatar: null, color: 'oklch(48% 0.14 340)' },
-]
-
-const discoverRooms = [
-  { name: 'Slow Burn Classics', tone: 'oklch(28% 0.08 42)', tags: ['casual', 'weekly'], book: sampleBooks[1], members: 42 },
-  { name: 'Hard Sci-Fi Lab', tone: 'oklch(24% 0.08 240)', tags: ['hardcore', 'voice'], book: sampleBooks[0], members: 31 },
-  { name: 'Myth & Memory', tone: 'oklch(30% 0.1 340)', tags: ['new', 'spoilers'], book: sampleBooks[3], members: 18 },
-  { name: 'Tiny Rooms Big Books', tone: 'oklch(26% 0.08 150)', tags: ['small', 'friendly'], book: sampleBooks[2], members: 9 },
-  { name: 'Paperback After Dark', tone: 'oklch(24% 0.07 65)', tags: ['trending', 'chat'], book: sampleBooks[1], members: 67 },
-  { name: 'Weekend Catch-up', tone: 'oklch(30% 0.09 25)', tags: ['casual', 'weekend'], book: sampleBooks[0], members: 24 },
-]
-
-const events = [
-  { day: '02', time: '8:00 PM', title: 'Chapters 9-12 voice room', club: 'Hard Sci-Fi Lab', live: true, going: 18 },
-  { day: '04', time: '7:30 PM', title: 'Spoiler-safe halfway check-in', club: 'Slow Burn Classics', live: false, going: 27 },
-  { day: '06', time: '6:00 PM', title: 'Finale debrief', club: 'Myth & Memory', live: false, going: 14 },
-  { day: '08', time: 'Noon', title: 'Quiet reading sprint', club: 'Weekend Catch-up', live: false, going: 33 },
-]
-
-const tournament = [
-  { left: sampleBooks[0], right: sampleBooks[1], leftPct: 58, votes: 248 },
-  { left: sampleBooks[2], right: sampleBooks[3], leftPct: 44, votes: 191 },
-  { left: sampleBooks[1], right: sampleBooks[3], leftPct: 62, votes: 309 },
-  { left: sampleBooks[0], right: sampleBooks[2], leftPct: 51, votes: 226 },
-]
-
-const chatter = [
-  { user: sampleUsers[0], club: 'Hard Sci-Fi Lab', text: 'The page 212 turn changes the whole read.', time: '4m' },
-  { user: sampleUsers[1], club: 'Slow Burn Classics', text: 'I am annotating this like evidence.', time: '12m' },
-  { user: sampleUsers[2], club: 'Myth & Memory', text: 'Saving my finale thoughts for the room tonight.', time: '28m' },
-]
+const FALLBACK_TOURNAMENT: DbCommunityTournamentVoteState = {
+  supported: false,
+  my_vote: null,
+  choices: tournamentBooks.map((book, index) => ({
+    id: book.id,
+    tournament_key: '2026-05-community-read',
+    book_key: book.id,
+    title: book.title,
+    author: book.author,
+    cover_url: book.cover,
+    position: index + 1,
+    vote_count: 0,
+  })),
+}
 
 export default function ClubsPage() {
   const supabase = useMemo(() => createClient(), [])
@@ -82,15 +61,21 @@ export default function ClubsPage() {
   const [message, setMessage] = useState('')
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [tournament, setTournament] = useState<DbCommunityTournamentVoteState>(FALLBACK_TOURNAMENT)
 
   const load = async () => {
     try {
       setLoadError('')
-      const [profile, rows] = await Promise.all([getCurrentProfile(supabase), listClubs(supabase, 24)])
+      const [profile, rows, tournamentState] = await Promise.all([
+        getCurrentProfile(supabase),
+        listClubs(supabase, 24),
+        getCommunityTournamentVoteState(supabase),
+      ])
       const previews = await listRecentClubPostPreviews(supabase, rows.map((club) => club.id))
       setMe(profile)
       setClubs(rows)
       setReplyPreviews(previews)
+      setTournament(tournamentState)
     } catch (error) {
       setClubs([])
       setReplyPreviews({})
@@ -116,8 +101,7 @@ export default function ClubsPage() {
     const haystack = `${club.name} ${club.description ?? ''} ${club.current_book?.title ?? ''}`.toLowerCase()
     return haystack.includes(query.toLowerCase())
   })
-  const liveClubs = filteredClubs.filter((club) => club.current_book).slice(0, 4)
-  const liveCount = liveClubs.reduce((sum, club) => sum + Math.max(2, Math.min(18, club.member_count ?? 3)), 0)
+  const liveClubs: DbClub[] = []
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--paper)' }}>
@@ -133,10 +117,10 @@ export default function ClubsPage() {
         }}
       >
         <FloatingSpines />
-        <div style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 390px', gap: 34, alignItems: 'center' }}>
+        <div className="clubs-hero-grid" style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 390px', gap: 34, alignItems: 'center' }}>
           <div>
             <div className="chip" style={{ background: 'rgba(255,255,255,0.1)', color: 'white', borderColor: 'rgba(255,255,255,0.16)', marginBottom: 20 }}>
-              <LiveDot /> {liveCount || 0} readers in live rooms now
+              <LiveDot /> 0 live rooms now
             </div>
             <h1 className="display-xl" style={{ maxWidth: 780, marginBottom: 22 }}>
               Read together,
@@ -164,9 +148,9 @@ export default function ClubsPage() {
           <div className="tabs" style={{ borderBottom: 0, gap: 8, flexWrap: 'wrap' }}>
             {[
               { id: 'your' as const, label: 'Your clubs', count: clubs.length },
-              { id: 'discover' as const, label: 'Discover', count: discoverRooms.length },
+              { id: 'discover' as const, label: 'Discover', count: clubs.length },
               { id: 'live' as const, label: 'Live rooms', count: Math.max(liveClubs.length, 0) },
-              { id: 'week' as const, label: 'This week', count: events.length },
+              { id: 'week' as const, label: 'This week', count: 0 },
             ].map((item) => (
               <button
                 key={item.id}
@@ -227,7 +211,7 @@ export default function ClubsPage() {
             {loading ? (
               <div className="card" style={{ padding: 36, textAlign: 'center', color: 'var(--ink-3)' }}>Loading clubs...</div>
             ) : filteredClubs.length ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18 }}>
+              <div className="clubs-two-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18 }}>
                 {filteredClubs.map((club, index) => (
                   <ClubCardBig
                     key={club.id}
@@ -247,11 +231,17 @@ export default function ClubsPage() {
               <StateCard icon="users" title="No clubs yet" body="Start the first public club from your main account and the admin controls will belong to you." compact />
             )}
 
-            <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 330px', gap: 18 }}>
-              <Tournament />
+            <section className="clubs-two-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 330px', gap: 18 }}>
+              <Tournament
+                state={tournament}
+                me={me}
+                onVote={async (choiceId) => {
+                  const next = await setCommunityTournamentVote(supabase, choiceId)
+                  setTournament(next)
+                }}
+              />
               <Leaderboard clubs={filteredClubs} />
             </section>
-            <Chatter />
           </div>
         )}
 
@@ -337,7 +327,7 @@ function CreateClubPanel({
   onSubmit: () => Promise<void>
 }) {
   return (
-    <div className="card" style={{ padding: 18, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 390px', gap: 18, alignItems: 'center', background: 'linear-gradient(135deg, var(--paper), var(--pulp-soft))' }}>
+    <div className="card clubs-create-grid" style={{ padding: 18, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 390px', gap: 18, alignItems: 'center', background: 'linear-gradient(135deg, var(--paper), var(--pulp-soft))' }}>
       <div>
         <div className="eyebrow" style={{ marginBottom: 8 }}>Host controls</div>
         <h2 className="display-md" style={{ marginBottom: 8 }}>Start the room from your main account.</h2>
@@ -365,7 +355,6 @@ function CreateClubPanel({
 
 function ClubCardBig({ club, tone, previews, me, onJoinToggle }: { club: DbClub; tone: string; previews: DbClubPostPreview[]; me: DbProfile | null; onJoinToggle: () => Promise<void> }) {
   const book = club.current_book ? toUiBook(club.current_book) : null
-  const progress = Math.min(92, 24 + (club.member_count ?? 1) * 7)
   return (
     <div className="card" style={{ overflow: 'hidden', transition: 'box-shadow 0.18s' }}>
       <div style={{ position: 'relative', minHeight: 178, padding: 22, background: tone, color: 'var(--paper)' }}>
@@ -379,21 +368,24 @@ function ClubCardBig({ club, tone, previews, me, onJoinToggle }: { club: DbClub;
               <span className="chip" style={{ background: 'rgba(255,255,255,0.12)', borderColor: 'rgba(255,255,255,0.18)', color: 'white' }}>spoiler-aware</span>
             </div>
           </div>
-          <span className="chip" style={{ alignSelf: 'start', background: 'rgba(255,255,255,0.14)', color: 'white', borderColor: 'rgba(255,255,255,0.18)' }}><LiveDot /> Live</span>
+          <span className="chip" style={{ alignSelf: 'start', background: 'rgba(255,255,255,0.14)', color: 'white', borderColor: 'rgba(255,255,255,0.18)' }}>{club.member_count ?? 0} members</span>
         </div>
       </div>
       <div style={{ padding: 18, display: 'grid', gap: 16 }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {book ? <Cover book={book} size={64} /> : <div style={{ width: 44, height: 64, borderRadius: 8, background: 'var(--paper-2)', display: 'grid', placeItems: 'center' }}><Icon name="book" size={19} /></div>}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Current book / Sundays 8 PM</div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Current book</div>
             <div style={{ fontWeight: 700, marginTop: 4 }}>{club.current_book?.title ?? 'Pick a current book'}</div>
-            <div className="progress" style={{ marginTop: 10 }}><div style={{ width: `${progress}%` }} /></div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5 }}>Club avg {progress}% / you +8 pages ahead</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5 }}>
+              {club.current_book ? 'Progress appears once members log sessions.' : 'Owner can choose this on the club page.'}
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <AvatarStack />
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            {club.is_member ? 'You are a member' : club.is_public ? 'Public club' : 'Private club'}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Link href={`/clubs/${club.id}`} className="btn btn-pulp btn-sm">Drop-in</Link>
             <Link href={`/clubs/${club.id}`} className="btn btn-outline btn-sm">Open</Link>
@@ -427,71 +419,140 @@ function ReplyPreview({ previews, clubId }: { previews: DbClubPostPreview[]; clu
   )
 }
 
-function AvatarStack() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center' }}>
-      {sampleUsers.slice(0, 4).map((user, index) => (
-        <div key={user.id} style={{ marginLeft: index ? -8 : 0, border: '2px solid var(--paper)', borderRadius: 99 }}>
-          <Avatar user={user} size={28} />
-        </div>
-      ))}
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginLeft: 8 }}>+12 reading</span>
-    </div>
-  )
-}
+function Tournament({
+  state,
+  me,
+  onVote,
+}: {
+  state: DbCommunityTournamentVoteState
+  me: DbProfile | null
+  onVote: (choiceId: string) => Promise<void>
+}) {
+  const [pendingChoiceId, setPendingChoiceId] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const totalVotes = state.choices.reduce((sum, choice) => sum + choice.vote_count, 0)
 
-function Tournament() {
+  const castVote = async (choiceId: string) => {
+    if (!me) {
+      setError('Sign in to vote')
+      return
+    }
+    setError('')
+    setPendingChoiceId(choiceId)
+    try {
+      await onVote(choiceId)
+    } catch (err) {
+      setError((err as Error).message || 'Could not save your vote')
+    } finally {
+      setPendingChoiceId(null)
+    }
+  }
+
   return (
     <div className="card" style={{ padding: 20 }}>
       <div className="eyebrow" style={{ marginBottom: 8 }}>Community tournament</div>
-      <h2 className="display-sm" style={{ marginBottom: 16 }}>March Madness</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-        {tournament.map((match) => <Matchup key={`${match.left.id}-${match.right.id}`} {...match} />)}
+      <h2 className="display-sm" style={{ marginBottom: 8 }}>May matchup</h2>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5, marginBottom: 16 }}>
+        Pick the next community read. Votes are shared through Supabase and visible to every reader.
+      </p>
+      <div className="clubs-two-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+        {state.choices.map((choice) => (
+          <TournamentChoice
+            key={choice.id}
+            choice={choice}
+            total={totalVotes}
+            selected={state.my_vote === choice.id}
+            pending={pendingChoiceId === choice.id}
+            disabled={!state.supported}
+            onVote={() => castVote(choice.id)}
+          />
+        ))}
       </div>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 12 }}>
+        {totalVotes === 0 ? 'No votes yet' : `${totalVotes} ${totalVotes === 1 ? 'vote' : 'votes'} cast`}
+      </div>
+      {!state.supported && (
+        <div style={{ fontSize: 12, color: 'var(--pulp-deep)', marginTop: 10 }}>
+          Run the latest Supabase schema to enable shared tournament voting.
+        </div>
+      )}
+      {error && <div style={{ fontSize: 12, color: 'var(--pulp-deep)', marginTop: 10 }}>{error}</div>}
     </div>
   )
 }
 
-function Matchup({ left, right, leftPct, votes }: { left: typeof sampleBooks[number]; right: typeof sampleBooks[number]; leftPct: number; votes: number }) {
+function TournamentChoice({
+  choice,
+  total,
+  selected,
+  pending,
+  disabled,
+  onVote,
+}: {
+  choice: DbCommunityTournamentVoteState['choices'][number]
+  total: number
+  selected: boolean
+  pending: boolean
+  disabled: boolean
+  onVote: () => void
+}) {
+  const count = choice.vote_count
+  const percent = total > 0 ? Math.round((count / total) * 100) : 0
+  const book = {
+    id: choice.id,
+    title: choice.title,
+    author: choice.author,
+    cover: choice.cover_url ?? '',
+    rating: 0,
+    ratings: 0,
+    mood: [] as string[],
+    genre: '',
+    pages: 0,
+    year: 0,
+    color: '#1a1a1a',
+  }
   return (
-    <div className="card" style={{ padding: 12 }}>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}><Cover book={left} size={42} /><Cover book={right} size={42} /></div>
-      {[{ book: left, pct: leftPct }, { book: right, pct: 100 - leftPct }].map((row) => (
-        <div key={row.book.id} style={{ marginBottom: 7 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}><b style={{ color: row.pct > 50 ? 'var(--pulp)' : 'var(--ink)' }}>{row.book.title}</b><span>{row.pct}%</span></div>
-          <div className="progress"><div style={{ width: `${row.pct}%`, background: row.pct > 50 ? 'var(--pulp)' : 'var(--ink-4)' }} /></div>
+    <div
+      className="card"
+      style={{
+        padding: 14,
+        borderColor: selected ? 'var(--pulp)' : 'var(--border)',
+        background: selected ? 'var(--pulp-soft)' : 'var(--paper)',
+      }}
+    >
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+        <Cover book={book} size={54} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, lineHeight: 1.15 }}>{book.title}</div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 3 }}>{book.author}</div>
         </div>
-      ))}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}><span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>{votes} votes</span><button className="btn btn-outline btn-sm">Cast vote</button></div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+        <span className="mono">{count} {count === 1 ? 'vote' : 'votes'}</span>
+        <span className="mono">{percent}%</span>
+      </div>
+      <div className="progress" style={{ marginBottom: 12 }}>
+        <div style={{ width: `${percent}%`, background: selected ? 'var(--pulp)' : 'var(--ink-4)' }} />
+      </div>
+      <button
+        className={selected ? 'btn btn-pulp btn-sm' : 'btn btn-outline btn-sm'}
+        onClick={onVote}
+        disabled={disabled || pending}
+        style={{ width: '100%', justifyContent: 'center', opacity: disabled ? 0.65 : 1 }}
+      >
+        {pending ? 'Saving...' : selected ? 'Voted' : 'Cast vote'}
+      </button>
     </div>
   )
 }
 
 function Leaderboard({ clubs }: { clubs: DbClub[] }) {
-  const rows = clubs.length ? clubs : discoverRooms.slice(0, 4).map((room, index) => ({ id: room.name, name: room.name, member_count: room.members + index * 3 }))
   return (
     <div className="card" style={{ padding: 20 }}>
       <div className="eyebrow" style={{ marginBottom: 12 }}>Club leaderboard</div>
-      <div style={{ display: 'grid', gap: 12 }}>
-        {rows.slice(0, 5).map((club: any, index) => (
-          <div key={club.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div className="mono" style={{ width: 26, color: 'var(--pulp)' }}>{String(index + 1).padStart(2, '0')}</div>
-            <div style={{ flex: 1, minWidth: 0 }}><b style={{ fontSize: 13 }}>{club.name}</b><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{980 - index * 137} pages this month</div></div>
-            <span className="chip chip-moss">+{12 - index}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Chatter() {
-  return (
-    <div className="card" style={{ padding: 20 }}>
-      <div className="eyebrow" style={{ marginBottom: 12 }}>Last-hour activity</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
-        {chatter.map((item) => <div key={`${item.user.id}-${item.time}`} style={{ display: 'flex', gap: 10, padding: 12, borderRadius: 14, background: 'var(--paper-2)' }}><Avatar user={item.user} size={32} /><div style={{ minWidth: 0 }}><div style={{ fontSize: 12 }}><b>{item.user.name}</b> / {item.club}</div><div style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>"{item.text}"</div><div className="mono" style={{ fontSize: 10, color: 'var(--ink-4)', marginTop: 5 }}>{item.time} ago</div></div></div>)}
-      </div>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5, margin: 0 }}>
+        No leaderboard yet. This will turn on after clubs have real logged reading sessions.
+      </p>
     </div>
   )
 }
@@ -500,18 +561,24 @@ function DiscoverView({ me }: { me: DbProfile | null }) {
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>{['Trending', 'New', 'Small', 'Hardcore', 'Casual', 'Voice rooms', 'Spoiler-safe'].map((chip) => <button key={chip} className="chip" style={{ cursor: 'pointer' }}>{chip}</button>)}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
-        {discoverRooms.map((room) => <DiscoverCard key={room.name} room={room} me={me} />)}
-      </div>
-    </div>
-  )
-}
-
-function DiscoverCard({ room, me }: { room: typeof discoverRooms[number]; me: DbProfile | null }) {
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <div style={{ padding: 18, minHeight: 110, color: 'white', background: room.tone }}><h3 className="serif" style={{ fontSize: 28 }}>{room.name}</h3><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>{room.tags.map((tag) => <span key={tag} className="chip" style={{ background: 'rgba(255,255,255,0.12)', color: 'white', borderColor: 'rgba(255,255,255,0.18)' }}>{tag}</span>)}</div></div>
-      <div style={{ padding: 16, display: 'grid', gap: 14 }}><div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><Cover book={room.book} size={54} /><div><div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase' }}>Current book</div><b style={{ fontSize: 13 }}>{room.book.title}</b><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{room.members} members</div></div></div><button className="btn btn-pulp btn-sm" disabled={!me} style={{ justifyContent: 'center', opacity: me ? 1 : 0.65 }}>{me ? 'Join' : 'Sign in to join'}</button></div>
+      <StateCard
+        icon="search"
+        title="Discover is waiting on real clubs"
+        body="Once more public clubs exist, this view can rank and filter them without invented data."
+        compact
+        action={
+          me ? (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => document.querySelector<HTMLInputElement>('input[placeholder="Club name"]')?.focus()}
+            >
+              Start a club
+            </button>
+          ) : (
+            <Link href="/login" className="btn btn-outline btn-sm">Sign in</Link>
+          )
+        }
+      />
     </div>
   )
 }
@@ -530,8 +597,7 @@ function LiveRoomCard({ club }: { club: DbClub }) {
   return (
     <div className="card" style={{ padding: 22, display: 'grid', gap: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><div><span className="chip chip-pulp"><LiveDot /> Live now</span><h3 className="serif" style={{ fontSize: 32, marginTop: 10 }}>{club.name}</h3><div style={{ color: 'var(--ink-3)', fontSize: 13 }}>Voice + chat / spoiler-tagged for current chapters</div></div><AudioBars /></div>
-      <AvatarStack />
-      <div style={{ color: 'var(--ink-2)', fontSize: 13 }}>{Math.max(2, club.member_count ?? 3)} readers in voice / +8 listening in chat</div>
+      <div style={{ color: 'var(--ink-2)', fontSize: 13 }}>Live presence counts will appear once voice rooms are wired to real room state.</div>
       <div style={{ display: 'flex', gap: 8 }}><Link href={`/clubs/${club.id}`} className="btn btn-pulp">Drop in</Link><Link href={`/clubs/${club.id}`} className="btn btn-outline">Listen only</Link></div>
     </div>
   )
@@ -543,15 +609,11 @@ function AudioBars() {
 
 function CalendarView() {
   return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      {events.map((event) => (
-        <div key={`${event.day}-${event.title}`} style={{ display: 'grid', gridTemplateColumns: '72px 90px 1fr auto', gap: 16, alignItems: 'center', padding: 18, borderBottom: '1px solid var(--border)' }}>
-          <div className="serif" style={{ fontSize: 36, color: event.live ? 'var(--pulp)' : 'var(--ink)' }}>{event.day}</div>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{event.time}</div>
-          <div><b>{event.title}</b><div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 3 }}>{event.club} / {event.going} going {event.live && <span className="chip chip-pulp" style={{ marginLeft: 6 }}>Live</span>}</div></div>
-          <div style={{ display: 'flex', gap: 8 }}><button className="btn btn-outline btn-sm">Save</button><button className="btn btn-pulp btn-sm">RSVP</button></div>
-        </div>
-      ))}
-    </div>
+    <StateCard
+      icon="clock"
+      title="No club events yet"
+      body="Events will show here after a club owner schedules them."
+      compact
+    />
   )
 }

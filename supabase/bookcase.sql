@@ -1477,6 +1477,64 @@ create policy "Users can comment on features"         on roadmap_comments for in
 create policy "Users can delete own comments"         on roadmap_comments for delete using (auth.uid() = user_id);
 
 -- ============================================================
+-- COMMUNITY TOURNAMENTS
+-- ============================================================
+
+create table if not exists community_tournament_choices (
+  id             uuid primary key default gen_random_uuid(),
+  tournament_key text not null,
+  book_key       text not null,
+  title          text not null,
+  author         text not null,
+  cover_url      text,
+  position       int not null default 1,
+  created_at     timestamptz not null default now(),
+  unique (tournament_key, book_key)
+);
+
+create table if not exists community_tournament_votes (
+  tournament_key text not null,
+  user_id        uuid not null references profiles(id) on delete cascade,
+  choice_id      uuid not null references community_tournament_choices(id) on delete cascade,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  primary key (tournament_key, user_id)
+);
+
+create index if not exists community_tournament_choices_key_idx on community_tournament_choices (tournament_key, position);
+create index if not exists community_tournament_votes_choice_idx on community_tournament_votes (choice_id);
+
+create or replace trigger community_tournament_votes_updated_at
+  before update on community_tournament_votes
+  for each row execute function update_updated_at();
+
+insert into community_tournament_choices (tournament_key, book_key, title, author, cover_url, position)
+values
+  ('2026-05-community-read', 'project-hail-mary', 'Project Hail Mary', 'Andy Weir', 'https://covers.openlibrary.org/b/isbn/9780593135204-L.jpg', 1),
+  ('2026-05-community-read', 'sunrise-on-the-reaping', 'Sunrise on the Reaping', 'Suzanne Collins', 'https://covers.openlibrary.org/b/isbn/9781546171461-L.jpg', 2)
+on conflict (tournament_key, book_key) do update
+set
+  title = excluded.title,
+  author = excluded.author,
+  cover_url = excluded.cover_url,
+  position = excluded.position;
+
+alter table community_tournament_choices enable row level security;
+alter table community_tournament_votes   enable row level security;
+
+drop policy if exists "Community tournament choices viewable by everyone" on community_tournament_choices;
+drop policy if exists "Community tournament votes viewable by everyone" on community_tournament_votes;
+drop policy if exists "Users can vote in community tournaments" on community_tournament_votes;
+drop policy if exists "Users can update own community tournament vote" on community_tournament_votes;
+drop policy if exists "Users can remove own community tournament vote" on community_tournament_votes;
+
+create policy "Community tournament choices viewable by everyone" on community_tournament_choices for select using (true);
+create policy "Community tournament votes viewable by everyone"   on community_tournament_votes for select using (true);
+create policy "Users can vote in community tournaments"           on community_tournament_votes for insert with check (auth.uid() = user_id);
+create policy "Users can update own community tournament vote"    on community_tournament_votes for update using (auth.uid() = user_id);
+create policy "Users can remove own community tournament vote"    on community_tournament_votes for delete using (auth.uid() = user_id);
+
+-- ============================================================
 -- NOTIFICATIONS
 -- ============================================================
 

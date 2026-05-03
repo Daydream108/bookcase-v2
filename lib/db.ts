@@ -259,6 +259,22 @@ export type DbRoadmapFeature = {
   has_voted?: boolean
 }
 
+export type DbCommunityTournamentChoice = {
+  id: string
+  tournament_key: string
+  book_key: string
+  title: string
+  author: string
+  cover_url: string | null
+  position: number
+}
+
+export type DbCommunityTournamentVoteState = {
+  choices: Array<DbCommunityTournamentChoice & { vote_count: number }>
+  my_vote: string | null
+  supported: boolean
+}
+
 export type DbActivityEvent = {
   id: string
   user_id: string
@@ -390,6 +406,17 @@ function isMissingSchemaColumnError(error: unknown, column: string) {
   return (
     (maybeError.code === 'PGRST204' || haystack.includes('schema cache')) &&
     haystack.includes(column.toLowerCase())
+  )
+}
+
+function isMissingSchemaTableError(error: unknown, table: string) {
+  if (!error || typeof error !== 'object') return false
+  const maybeError = error as { code?: string; message?: string; details?: string }
+  const haystack = `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.toLowerCase()
+  return (
+    maybeError.code === '42P01' ||
+    maybeError.code === 'PGRST205' ||
+    (haystack.includes('schema cache') && haystack.includes(table.toLowerCase()))
   )
 }
 
@@ -4380,6 +4407,111 @@ export async function listRecentClubPostPreviews(
   }
 
   return previews
+}
+
+const MAY_TOURNAMENT_CHOICES = [
+  {
+    tournament_key: '2026-05-community-read',
+    book_key: 'project-hail-mary',
+    title: 'Project Hail Mary',
+    author: 'Andy Weir',
+    cover_url: 'https://covers.openlibrary.org/b/isbn/9780593135204-L.jpg',
+    position: 1,
+  },
+  {
+    tournament_key: '2026-05-community-read',
+    book_key: 'sunrise-on-the-reaping',
+    title: 'Sunrise on the Reaping',
+    author: 'Suzanne Collins',
+    cover_url: 'https://covers.openlibrary.org/b/isbn/9781546171461-L.jpg',
+    position: 2,
+  },
+]
+
+export async function getCommunityTournamentVoteState(
+  supabase: Client,
+  tournamentKey = '2026-05-community-read'
+): Promise<DbCommunityTournamentVoteState> {
+  const user = await getCurrentUser(supabase)
+  const choicesResult = await supabase
+    .from('community_tournament_choices')
+    .select('*')
+    .eq('tournament_key', tournamentKey)
+    .order('position', { ascending: true })
+
+  if (choicesResult.error) {
+    if (isMissingSchemaTableError(choicesResult.error, 'community_tournament_choices')) {
+      return {
+        supported: false,
+        choices: MAY_TOURNAMENT_CHOICES.map((choice) => ({ ...choice, id: choice.book_key, vote_count: 0 })),
+        my_vote: null,
+      }
+    }
+    throw choicesResult.error
+  }
+
+  let choices = (choicesResult.data ?? []) as DbCommunityTournamentChoice[]
+  if (!choices.length) {
+    choices = MAY_TOURNAMENT_CHOICES.map((choice) => ({ ...choice, id: choice.book_key }))
+  }
+
+  const votesResult = await supabase
+    .from('community_tournament_votes')
+    .select('choice_id, user_id')
+    .eq('tournament_key', tournamentKey)
+
+  if (votesResult.error) {
+    if (isMissingSchemaTableError(votesResult.error, 'community_tournament_votes')) {
+      return {
+        supported: false,
+        choices: choices.map((choice) => ({ ...choice, vote_count: 0 })),
+        my_vote: null,
+      }
+    }
+    throw votesResult.error
+  }
+
+  const counts = new Map<string, number>()
+  let myVote: string | null = null
+  for (const vote of votesResult.data ?? []) {
+    counts.set(vote.choice_id, (counts.get(vote.choice_id) ?? 0) + 1)
+    if (user && vote.user_id === user.id) myVote = vote.choice_id
+  }
+
+  return {
+    supported: true,
+    choices: choices.map((choice) => ({ ...choice, vote_count: counts.get(choice.id) ?? 0 })),
+    my_vote: myVote,
+  }
+}
+
+export async function setCommunityTournamentVote(
+  supabase: Client,
+  choiceId: string,
+  tournamentKey = '2026-05-community-read'
+): Promise<DbCommunityTournamentVoteState> {
+  const user = await getCurrentUser(supabase)
+  if (!user) throw new Error('Sign in to vote')
+
+  const { error } = await supabase
+    .from('community_tournament_votes')
+    .upsert(
+      {
+        tournament_key: tournamentKey,
+        user_id: user.id,
+        choice_id: choiceId,
+      },
+      { onConflict: 'tournament_key,user_id' }
+    )
+
+  if (error) {
+    if (isMissingSchemaTableError(error, 'community_tournament_votes')) {
+      throw new Error('Community tournament voting needs the latest Supabase schema.')
+    }
+    throw error
+  }
+
+  return getCommunityTournamentVoteState(supabase, tournamentKey)
 }
 
 export async function postToClub(
